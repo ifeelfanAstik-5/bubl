@@ -4,8 +4,10 @@
 
 ---
 
-## 📖 Product Philosophy & Guidelines
-For a comprehensive overview of the product vision, metaphors, community rules, and design guidelines, please read the [**Application Manifesto (APP_MANIFESTO.md)**](./APP_MANIFESTO.md).
+## 📖 Documentation & Guides
+
+- [**Application Manifesto (APP_MANIFESTO.md)**](./APP_MANIFESTO.md) — Comprehensive product vision, metaphors, community rules, and design guidelines.
+- [**Developer & Contribution Guide (CONTRIBUTING.md)**](./CONTRIBUTING.md) — Complete engineering manual: architecture, environment variables, Neon database workflows, testing guidelines, and Vercel + Railway deployment steps.
 
 ---
 
@@ -99,6 +101,17 @@ npm run server       # Starts Hono API on http://localhost:3001
 # On Bun:
 bun run server/index.ts
 ```
+
+---
+
+## ☁️ Deployment
+
+Bubl is pre-configured for instant zero-downtime deployment:
+- **Frontend on Vercel**: Configured via `vercel.json` with Vite SPA client-side routing.
+- **Backend on Railway**: Configured via `railway.json` using Nixpacks for persistent Hono container hosting.
+- **Database on Neon**: Serverless cloud PostgreSQL with connection pooling.
+
+See [**CONTRIBUTING.md**](./CONTRIBUTING.md#️-deployment-guide) for step-by-step instructions.
 
 ---
 
