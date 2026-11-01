@@ -7,3 +7,4 @@ coverage/
 bubl_pgdata/
 .env*
 !.env.example
+.neon

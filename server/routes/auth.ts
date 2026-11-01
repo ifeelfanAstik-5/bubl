@@ -5,11 +5,29 @@ import { db, checkDatabaseConnection } from '../db';
 import { users, userHobbies, userUnlockedTypes, authOtps } from '../db/schema';
 import { eq, and, gt } from 'drizzle-orm';
 import { INITIAL_USER } from '../../src/data/mockData';
+import { createRemoteJWKSet, jwtVerify } from 'jose';
 
 export const authRoutes = new Hono();
 
 // In-memory token session cache for fast stateless / mobile verification
 const activeSessions = new Map<string, string>(); // token -> userId
+
+// Neon Auth JWKS setup
+const jwksUrl = process.env.NEON_AUTH_JWKS_URL;
+const neonJwks = jwksUrl ? createRemoteJWKSet(new URL(jwksUrl)) : null;
+
+export async function verifyNeonAuthJwt(token: string): Promise<{ sub?: string; email?: string } | null> {
+  if (!neonJwks) return null;
+  try {
+    const { payload } = await jwtVerify(token, neonJwks);
+    return {
+      sub: payload.sub,
+      email: typeof payload.email === 'string' ? payload.email : undefined,
+    };
+  } catch {
+    return null;
+  }
+}
 
 export function getUserIdFromRequest(c: any): string {
   // 1. Check Bearer token in Authorization header (Mobile / React Native ready)
@@ -31,6 +49,24 @@ export function getUserIdFromRequest(c: any): string {
   // Default fallback user for dev/preview
   return 'me';
 }
+
+// Return Neon & Auth services configuration status
+authRoutes.get('/services', async (c) => {
+  const isDbConnected = await checkDatabaseConnection();
+  return c.json({
+    postgres: {
+      connected: isDbConnected,
+      branch: process.env.NEON_BRANCH || 'production',
+      isNeon: Boolean(process.env.DATABASE_URL?.includes('neon.tech'))
+    },
+    auth: {
+      provider: 'Neon Auth',
+      configured: Boolean(process.env.NEON_AUTH_BASE_URL),
+      baseUrl: process.env.NEON_AUTH_BASE_URL || null,
+      jwksUrl: process.env.NEON_AUTH_JWKS_URL || null
+    }
+  });
+});
 
 const RequestOtpSchema = z.object({
   email: z.string().email()

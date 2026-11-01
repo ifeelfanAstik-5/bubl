@@ -35,7 +35,16 @@ app.get('/api/health', async (c) => {
     status: 'ok',
     app: 'Bubl Mindful Pen Pal Backend',
     runtime: typeof (globalThis as any).Bun !== 'undefined' ? 'Bun' : 'Node.js',
-    database: dbOk ? 'connected' : 'offline_or_local_fallback',
+    database: {
+      status: dbOk ? 'connected' : 'offline_or_local_fallback',
+      provider: process.env.DATABASE_URL?.includes('neon.tech') ? 'Neon Postgres' : 'PostgreSQL',
+      branch: process.env.NEON_BRANCH || null
+    },
+    neonAuth: {
+      configured: Boolean(process.env.NEON_AUTH_BASE_URL),
+      baseUrl: process.env.NEON_AUTH_BASE_URL || null,
+      jwksUrl: process.env.NEON_AUTH_JWKS_URL || null
+    },
     timestamp: new Date().toISOString()
   });
 });

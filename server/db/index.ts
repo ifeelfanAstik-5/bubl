@@ -8,11 +8,14 @@ dotenv.config();
 const connectionString =
   process.env.DATABASE_URL || 'postgres://bubl:bubl_secret_password@localhost:5432/bubl_db';
 
+const isNeon = connectionString.includes('neon.tech');
+
 // Create postgres query client with connection pool
 const client = postgres(connectionString, {
-  max: 10,
+  max: isNeon ? 20 : 10,
   idle_timeout: 20,
-  connect_timeout: 10,
+  connect_timeout: 15,
+  ssl: isNeon ? 'require' : undefined,
   onnotice: () => {} // quiet notices
 });
 
