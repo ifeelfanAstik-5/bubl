@@ -16,6 +16,7 @@ import {
   INITIAL_USER_PUBLISHED_BUBBLES
 } from './data/mockData';
 import { processBubbleContentAsync } from './services/moderationService';
+import { apiClient } from './services/apiClient';
 import { Avatar2D } from './components/Avatar2D';
 import { FriendsSidebar } from './components/FriendsSidebar';
 import { BubbleBoard } from './components/BubbleBoard';
@@ -179,6 +180,33 @@ export default function App() {
     localStorage.setItem('bubble_conversations_v2', JSON.stringify(directMessages));
   }, [directMessages]);
 
+  // Synchronize with Bubl Full-Stack Bun/PostgreSQL API (with resilient fallback)
+  useEffect(() => {
+    apiClient.getMe().then((serverUser) => {
+      if (serverUser && serverUser.id) {
+        setCurrentUser((prev) => ({ ...prev, ...serverUser }));
+      }
+    });
+
+    apiClient.getAtmosphereBubbles().then((serverBubbles) => {
+      if (serverBubbles && serverBubbles.length > 0) {
+        setBubbles(serverBubbles);
+      }
+    });
+
+    apiClient.getOrbits().then((serverOrbits) => {
+      if (serverOrbits && serverOrbits.length > 0) {
+        setFriends(serverOrbits);
+      }
+    });
+
+    apiClient.getMyBubbles().then((serverMyBubbles) => {
+      if (serverMyBubbles && serverMyBubbles.length > 0) {
+        setUserPublishedBubbles(serverMyBubbles);
+      }
+    });
+  }, []);
+
   // Toast auto-clear
   useEffect(() => {
     if (notificationToast) {
@@ -245,6 +273,7 @@ export default function App() {
     }));
 
     awardBreathXP(10);
+    apiClient.burstBubble(bubble.id);
     setBurstingBubble(bubble);
   };
 
@@ -387,6 +416,16 @@ export default function App() {
 
     awardBreathXP(30);
 
+    apiClient.publishBubble({
+      title: newBubble.title,
+      content: newBubble.content,
+      bubbleType: newBubble.bubbleType,
+      bubbleColor: newBubble.bubbleColor,
+      breathEffort: 'balanced',
+      hobbies: newBubble.hobbies,
+      promptQuestion: newBubble.promptQuestion
+    });
+
     setNotificationToast(
       'Bubble released to airspace! Asynchronous content review underway...'
     );
@@ -478,6 +517,7 @@ export default function App() {
 
   // Handler: Reset warnings and suspension for developer test
   const handleResetWarningsAndSuspension = () => {
+    apiClient.resetSuspension();
     setCurrentUser((prev) => {
       const updated: UserProfile = {
         ...prev,
@@ -495,6 +535,7 @@ export default function App() {
   const handleDeletePublishedBubble = (bubbleId: string) => {
     setUserPublishedBubbles((prev) => prev.filter((b) => b.id !== bubbleId));
     setBubbles((prev) => prev.filter((b) => b.id !== bubbleId));
+    apiClient.deleteBubble(bubbleId);
     setNotificationToast('Bubble unpublished.');
   };
 
@@ -506,6 +547,7 @@ export default function App() {
     if (selectedFriendId === friendId) {
       setSelectedFriendId(null);
     }
+    apiClient.releaseOrbit(friendId);
     setNotificationToast(
       'Connection removed silently. They have not been notified.'
     );
@@ -520,6 +562,7 @@ export default function App() {
     setFriends((prev) =>
       prev.map((f) => (f.id === friendId ? { ...f, status: 'active' } : f))
     );
+    apiClient.restoreOrbit(friendId);
     setNotificationToast('Connection restored to active list.');
   };
 
@@ -582,6 +625,12 @@ export default function App() {
 
     awardBreathXP(effort === 'deep' ? 20 : effort === 'gentle' ? 15 : 10);
 
+    apiClient.sendMessage(selectedFriend.id, {
+      body: data.body,
+      breathEffort: effort,
+      mediaAttachments: data.mediaAttachments
+    });
+
     setNotificationToast(
       `Bubble sent to ${selectedFriend.name}. Airmail drift in progress (~${Math.round(deliveryMs / 60000)}m).`
     );
@@ -589,6 +638,7 @@ export default function App() {
 
   // Handler: Media Handshake
   const handleRequestMediaHandshake = (friendId: string) => {
+    apiClient.handshakeMedia(friendId, 'request');
     setFriends((prev) =>
       prev.map((f) =>
         f.id === friendId
@@ -609,6 +659,7 @@ export default function App() {
   };
 
   const handleApproveMediaHandshake = (friendId: string) => {
+    apiClient.handshakeMedia(friendId, 'approve');
     setFriends((prev) =>
       prev.map((f) =>
         f.id === friendId
@@ -628,6 +679,7 @@ export default function App() {
 
   // Fast-Forward Transit Tester tool
   const handleFastForwardTransit = () => {
+    apiClient.accelerateWinds();
     setDirectMessages((prev) => {
       const updated = { ...prev };
       Object.keys(updated).forEach((convId) => {
@@ -969,9 +1021,10 @@ export default function App() {
         initialConfig={currentUser.avatar}
         isOpen={isAvatarEditorOpen}
         onClose={() => setIsAvatarEditorOpen(false)}
-        onSave={(newAvatar) =>
-          setCurrentUser((prev) => ({ ...prev, avatar: newAvatar }))
-        }
+        onSave={(newAvatar) => {
+          setCurrentUser((prev) => ({ ...prev, avatar: newAvatar }));
+          apiClient.updateAvatar(newAvatar);
+        }}
       />
 
       {/* 4. Profile & Hobbies Modal */}
@@ -979,7 +1032,10 @@ export default function App() {
         user={currentUser}
         isOpen={isProfileModalOpen}
         onClose={() => setIsProfileModalOpen(false)}
-        onSave={(updated) => setCurrentUser((prev) => ({ ...prev, ...updated }))}
+        onSave={(updated) => {
+          setCurrentUser((prev) => ({ ...prev, ...updated }));
+          apiClient.updateProfile(updated);
+        }}
         onOpenAvatarEditor={() => {
           setIsProfileModalOpen(false);
           setIsAvatarEditorOpen(true);

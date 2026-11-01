@@ -1,0 +1,24 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: bubl-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: bubl
+      POSTGRES_PASSWORD: bubl_secret_password
+      POSTGRES_DB: bubl_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - bubl_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bubl -d bubl_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  bubl_pgdata:
+    driver: local
