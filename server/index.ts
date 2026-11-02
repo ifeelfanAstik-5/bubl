@@ -82,10 +82,11 @@ if (typeof (globalThis as any).Bun !== 'undefined') {
   serve(
     {
       fetch: app.fetch,
-      port: PORT
+      port: PORT,
+      hostname: '0.0.0.0'
     },
     (info) => {
-      console.log(`🫧 Bubl server running via @hono/node-server at http://localhost:${info.port}`);
+      console.log(`🫧 Bubl server running via @hono/node-server at http://${info.address}:${info.port}`);
     }
   );
 }
