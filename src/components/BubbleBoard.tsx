@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { BubblePost, UserProfile, BubbleType } from '../types';
+import { BubblePost, UserProfile, BubbleType, WeatherCondition } from '../types';
 import { Avatar2D } from './Avatar2D';
 import { playBubblePopSound } from '../services/soundEffects';
 import {
@@ -13,13 +13,15 @@ import {
   Flame,
   Feather,
   Lock,
-  Compass
+  Compass,
+  Droplets
 } from 'lucide-react';
 
 interface BubbleBoardProps {
   bubbles: BubblePost[];
   currentUser: UserProfile;
   burstBubbleIdsToday: string[];
+  weather?: WeatherCondition | null;
   onBurstBubble: (bubble: BubblePost) => void;
   onCreateBubbleClick: () => void;
 }
@@ -77,6 +79,7 @@ export const BubbleBoard: React.FC<BubbleBoardProps> = ({
   bubbles,
   currentUser,
   burstBubbleIdsToday,
+  weather,
   onBurstBubble,
   onCreateBubbleClick
 }) => {
@@ -154,9 +157,17 @@ export const BubbleBoard: React.FC<BubbleBoardProps> = ({
               <h2 className="text-lg font-semibold text-stone-900 tracking-tight flex items-center gap-2 font-serif-letter">
                 Current Atmosphere
                 <span className="text-xs px-2.5 py-0.5 font-sans font-normal bg-stone-100 text-stone-600 rounded-full border border-stone-200/60">
-                  5 Drifting Bubbles
+                  {bubbles.length} Drifting Bubble{bubbles.length === 1 ? '' : 's'}
                 </span>
               </h2>
+              {weather && (
+                <div className="flex items-center gap-1.5 mt-1 text-[11px] text-stone-500 font-mono">
+                  <span>🌬️</span>
+                  <span>
+                    {currentUser.location.split(',')[0]} Sky: {weather.temperatureC}°C, {weather.conditionDescription} ({weather.windSpeedKmH} km/h wind)
+                  </span>
+                </div>
+              )}
             </div>
           </div>
           <p className="text-xs text-stone-500 mt-1.5 max-w-xl font-normal leading-relaxed">
@@ -255,9 +266,32 @@ export const BubbleBoard: React.FC<BubbleBoardProps> = ({
         ))}
       </div>
 
-      {/* Grid of the 5 Drifting Spheres */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-        {filteredBubbles.map((bubble, index) => {
+      {/* Drifting Spheres or Serene Empty State */}
+      {filteredBubbles.length === 0 ? (
+        <div className="flex flex-col items-center justify-center p-12 text-center rounded-3xl border border-dashed border-stone-300 bg-white/50 backdrop-blur-xs space-y-4 shadow-inner">
+          <div className="w-16 h-16 rounded-full bg-amber-100/70 border border-amber-200/80 flex items-center justify-center text-3xl shadow-xs animate-float-slow">
+            🫧
+          </div>
+          <div className="space-y-1.5 max-w-md">
+            <h3 className="font-serif text-base font-semibold text-stone-900">
+              The Atmosphere is Peaceful & Still
+            </h3>
+            <p className="text-xs text-stone-500 font-serif leading-relaxed">
+              No bubbles are currently drifting through your local airspace. Dip your wand into your
+              Soap Mixture Vial and blow the first thought into the sky.
+            </p>
+          </div>
+          <button
+            onClick={onCreateBubbleClick}
+            className="px-5 py-2.5 rounded-2xl bg-amber-800 hover:bg-amber-900 text-amber-50 font-serif text-xs font-medium shadow-sm transition-all flex items-center gap-2"
+          >
+            <span>🧪</span>
+            <span>Dip Wand & Blow a Bubble</span>
+          </button>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+          {filteredBubbles.map((bubble, index) => {
           const isPopping = poppingBubbleId === bubble.id;
           const isBurst = burstBubbleIdsToday.includes(bubble.id);
           const typeInfo = (bubble.bubbleType && TYPE_CONFIG[bubble.bubbleType]) || DEFAULT_TYPE_CONFIG;
@@ -410,7 +444,8 @@ export const BubbleBoard: React.FC<BubbleBoardProps> = ({
             </div>
           );
         })}
-      </div>
+        </div>
+      )}
     </div>
   );
 };

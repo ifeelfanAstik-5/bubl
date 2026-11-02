@@ -6,15 +6,9 @@ import {
   DirectMessage,
   AvatarConfig,
   DeclineReason,
-  ModerationWarningRecord
+  ModerationWarningRecord,
+  WeatherCondition
 } from './types';
-import {
-  INITIAL_USER,
-  INITIAL_FRIENDS,
-  INITIAL_BUBBLES,
-  INITIAL_DIRECT_MESSAGES,
-  INITIAL_USER_PUBLISHED_BUBBLES
-} from './data/mockData';
 import { processBubbleContentAsync } from './services/moderationService';
 import { apiClient } from './services/apiClient';
 import { Avatar2D } from './components/Avatar2D';
@@ -27,6 +21,8 @@ import { BurstBubbleModal } from './components/BurstBubbleModal';
 import { AvatarEditorModal } from './components/AvatarEditorModal';
 import { ProfileModal } from './components/ProfileModal';
 import { ModerationWarningModal } from './components/ModerationWarningModal';
+import { OnboardingModal } from './components/OnboardingModal';
+import { MixtureVialWidget } from './components/MixtureVialWidget';
 import {
   CircleDot,
   Plus,
@@ -46,103 +42,15 @@ export default function App() {
   const [activeNav, setActiveNav] = useState<'atmosphere' | 'my_airspace'>('atmosphere');
   const [isMobileDrawerOpen, setIsMobileDrawerOpen] = useState(false);
 
-  // State Initialization with LocalStorage Persistence
-  const [currentUser, setCurrentUser] = useState<UserProfile>(() => {
-    const saved = localStorage.getItem('bubble_user_profile_v2');
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        return {
-          ...INITIAL_USER,
-          ...parsed,
-          unlockedBubbleTypes:
-            parsed.unlockedBubbleTypes && parsed.unlockedBubbleTypes.length > 0
-              ? parsed.unlockedBubbleTypes
-              : INITIAL_USER.unlockedBubbleTypes,
-          burstBubbleIdsToday:
-            parsed.burstBubbleIdsToday || INITIAL_USER.burstBubbleIdsToday,
-          hobbies: parsed.hobbies || INITIAL_USER.hobbies,
-          exchangeInterest: parsed.exchangeInterest || INITIAL_USER.exchangeInterest,
-          breathLevel: parsed.breathLevel || INITIAL_USER.breathLevel,
-          breathExp: parsed.breathExp || INITIAL_USER.breathExp,
-          dailyBreathEnergy:
-            parsed.dailyBreathEnergy ?? INITIAL_USER.dailyBreathEnergy,
-          moderationWarningsCount:
-            parsed.moderationWarningsCount ?? INITIAL_USER.moderationWarningsCount,
-          suspendedUntil: parsed.suspendedUntil ?? INITIAL_USER.suspendedUntil,
-          moderationWarningsHistory:
-            parsed.moderationWarningsHistory || INITIAL_USER.moderationWarningsHistory
-        };
-      } catch (e) {
-        console.error(e);
-      }
-    }
-    return INITIAL_USER;
-  });
+  // User Authentication & Global Data States (Strictly Real Data from Neon Postgres)
+  const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
+  const [isLoadingUser, setIsLoadingUser] = useState(true);
+  const [weather, setWeather] = useState<WeatherCondition | null>(null);
 
-  const [friends, setFriends] = useState<Friend[]>(() => {
-    const saved = localStorage.getItem('bubble_friends_v2');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        console.error(e);
-      }
-    }
-    return INITIAL_FRIENDS;
-  });
-
-  const [bubbles, setBubbles] = useState<BubblePost[]>(() => {
-    const saved = localStorage.getItem('bubble_posts_v2');
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed.map((b) => ({
-            ...b,
-            bubbleType: b.bubbleType || 'thought'
-          }));
-        }
-      } catch (e) {
-        console.error(e);
-      }
-    }
-    return INITIAL_BUBBLES;
-  });
-
-  const [userPublishedBubbles, setUserPublishedBubbles] = useState<BubblePost[]>(
-    () => {
-      const saved = localStorage.getItem('bubble_user_published_v2');
-      if (saved) {
-        try {
-          const parsed = JSON.parse(saved);
-          if (Array.isArray(parsed)) {
-            return parsed.map((b) => ({
-              ...b,
-              bubbleType: b.bubbleType || 'thought'
-            }));
-          }
-        } catch (e) {
-          console.error(e);
-        }
-      }
-      return INITIAL_USER_PUBLISHED_BUBBLES;
-    }
-  );
-
-  const [directMessages, setDirectMessages] = useState<
-    Record<string, DirectMessage[]>
-  >(() => {
-    const saved = localStorage.getItem('bubble_conversations_v2');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        console.error(e);
-      }
-    }
-    return INITIAL_DIRECT_MESSAGES;
-  });
+  const [friends, setFriends] = useState<Friend[]>([]);
+  const [bubbles, setBubbles] = useState<BubblePost[]>([]);
+  const [userPublishedBubbles, setUserPublishedBubbles] = useState<BubblePost[]>([]);
+  const [directMessages, setDirectMessages] = useState<Record<string, DirectMessage[]>>({});
 
   // UI Navigation & Modals State
   const [selectedFriendId, setSelectedFriendId] = useState<string | null>(null);
@@ -156,55 +64,32 @@ export default function App() {
   const [activeWarningRecord, setActiveWarningRecord] = useState<ModerationWarningRecord | null>(null);
   const [isWarningModalOpen, setIsWarningModalOpen] = useState(false);
 
-  // Sync to localStorage
+  // Load real server data for the authenticated user
+  const loadServerData = (user: UserProfile) => {
+    apiClient.getAtmosphereBubbles().then((b) => setBubbles(b || []));
+    apiClient.getOrbits().then((f) => setFriends(f || []));
+    apiClient.getMyBubbles().then((mb) => setUserPublishedBubbles(mb || []));
+    apiClient.getWeather(user.latitude || 35.0116, user.longitude || 135.7681).then(setWeather);
+  };
+
+  // Check authenticated session on startup
   useEffect(() => {
-    localStorage.setItem('bubble_user_profile_v2', JSON.stringify(currentUser));
-  }, [currentUser]);
-
-  useEffect(() => {
-    localStorage.setItem('bubble_friends_v2', JSON.stringify(friends));
-  }, [friends]);
-
-  useEffect(() => {
-    localStorage.setItem('bubble_posts_v2', JSON.stringify(bubbles));
-  }, [bubbles]);
-
-  useEffect(() => {
-    localStorage.setItem(
-      'bubble_user_published_v2',
-      JSON.stringify(userPublishedBubbles)
-    );
-  }, [userPublishedBubbles]);
-
-  useEffect(() => {
-    localStorage.setItem('bubble_conversations_v2', JSON.stringify(directMessages));
-  }, [directMessages]);
-
-  // Synchronize with Bubl Full-Stack Bun/PostgreSQL API (with resilient fallback)
-  useEffect(() => {
-    apiClient.getMe().then((serverUser) => {
-      if (serverUser && serverUser.id) {
-        setCurrentUser((prev) => ({ ...prev, ...serverUser }));
-      }
-    });
-
-    apiClient.getAtmosphereBubbles().then((serverBubbles) => {
-      if (serverBubbles && serverBubbles.length > 0) {
-        setBubbles(serverBubbles);
-      }
-    });
-
-    apiClient.getOrbits().then((serverOrbits) => {
-      if (serverOrbits && serverOrbits.length > 0) {
-        setFriends(serverOrbits);
-      }
-    });
-
-    apiClient.getMyBubbles().then((serverMyBubbles) => {
-      if (serverMyBubbles && serverMyBubbles.length > 0) {
-        setUserPublishedBubbles(serverMyBubbles);
-      }
-    });
+    apiClient
+      .getMe()
+      .then((user) => {
+        if (user && user.id) {
+          setCurrentUser(user);
+          loadServerData(user);
+        } else {
+          setCurrentUser(null);
+        }
+      })
+      .catch(() => {
+        setCurrentUser(null);
+      })
+      .finally(() => {
+        setIsLoadingUser(false);
+      });
   }, []);
 
   // Toast auto-clear
@@ -221,6 +106,7 @@ export default function App() {
   // Award Breath Experience and level up breath mastery
   const awardBreathXP = (xp: number) => {
     setCurrentUser((prev) => {
+      if (!prev) return null;
       const newExp = prev.breathExp + xp;
       const newLevel = newExp >= 50 ? 3 : newExp >= 20 ? 2 : 1;
       return {
@@ -233,11 +119,12 @@ export default function App() {
   };
 
   const isSuspended = Boolean(
-    currentUser.suspendedUntil && currentUser.suspendedUntil > Date.now()
+    currentUser?.suspendedUntil && currentUser.suspendedUntil > Date.now()
   );
 
   // Handler: Burst a bubble (checks 3 of 5 bursts quota)
   const handleBurstBubble = (bubble: BubblePost) => {
+    if (!currentUser) return;
     if (isSuspended) {
       setNotificationToast(
         'Account Suspended: Cannot burst community bubbles during your 7-day suspension.'
@@ -266,11 +153,14 @@ export default function App() {
     }
 
     // Decrement daily burst quota and record bubble ID
-    setCurrentUser((prev) => ({
-      ...prev,
-      dailyBurstsRemaining: Math.max(0, prev.dailyBurstsRemaining - 1),
-      burstBubbleIdsToday: [...prev.burstBubbleIdsToday, bubble.id]
-    }));
+    setCurrentUser((prev) => {
+      if (!prev) return null;
+      return {
+        ...prev,
+        dailyBurstsRemaining: Math.max(0, prev.dailyBurstsRemaining - 1),
+        burstBubbleIdsToday: [...prev.burstBubbleIdsToday, bubble.id]
+      };
+    });
 
     awardBreathXP(10);
     apiClient.burstBubble(bubble.id);
@@ -283,6 +173,7 @@ export default function App() {
     messageText: string,
     breathEffort: 'gentle' | 'balanced' | 'deep'
   ) => {
+    if (!currentUser) return;
     if (isSuspended) {
       setNotificationToast(
         'Account Suspended: Cannot send dispatches during your 7-day suspension.'
@@ -409,22 +300,33 @@ export default function App() {
     setBubbles((prev) => [newBubble, ...prev]);
 
     // Update user's last published timestamp (1/week quota)
-    setCurrentUser((prev) => ({
-      ...prev,
-      lastBubblePublishedAt: Date.now()
-    }));
+    setCurrentUser((prev) => {
+      if (!prev) return null;
+      return {
+        ...prev,
+        lastBubblePublishedAt: Date.now()
+      };
+    });
 
     awardBreathXP(30);
 
-    apiClient.publishBubble({
-      title: newBubble.title,
-      content: newBubble.content,
-      bubbleType: newBubble.bubbleType,
-      bubbleColor: newBubble.bubbleColor,
-      breathEffort: 'balanced',
-      hobbies: newBubble.hobbies,
-      promptQuestion: newBubble.promptQuestion
-    });
+    apiClient
+      .publishBubble({
+        title: newBubble.title,
+        content: newBubble.content,
+        bubbleType: newBubble.bubbleType,
+        bubbleColor: newBubble.bubbleColor,
+        breathEffort: 'balanced',
+        hobbies: newBubble.hobbies,
+        promptQuestion: newBubble.promptQuestion
+      })
+      .then((res) => {
+        if (res && res.mixtureVialMl !== undefined) {
+          setCurrentUser((prev) =>
+            prev ? { ...prev, mixtureVialMl: res.mixtureVialMl! } : null
+          );
+        }
+      });
 
     setNotificationToast(
       'Bubble released to airspace! Asynchronous content review underway...'
@@ -457,6 +359,7 @@ export default function App() {
 
         // Record warning and check 3-warning suspension rule
         setCurrentUser((prev) => {
+          if (!prev) return null;
           const currentCount = prev.moderationWarningsCount || 0;
           const newWarningCount = currentCount + 1;
           const willSuspend = newWarningCount >= 3;
@@ -519,6 +422,7 @@ export default function App() {
   const handleResetWarningsAndSuspension = () => {
     apiClient.resetSuspension();
     setCurrentUser((prev) => {
+      if (!prev) return null;
       const updated: UserProfile = {
         ...prev,
         moderationWarningsCount: 0,
@@ -573,7 +477,7 @@ export default function App() {
     breathEffort?: 'gentle' | 'balanced' | 'deep';
     mediaAttachments?: any[];
   }) => {
-    if (!selectedFriend) return;
+    if (!currentUser || !selectedFriend) return;
 
     if (isSuspended) {
       setNotificationToast(
@@ -702,6 +606,47 @@ export default function App() {
     setNotificationToast('Air currents accelerated! All dispatches arrived.');
   };
 
+  // Sign out handler
+  const handleLogout = async () => {
+    await apiClient.logout();
+    setCurrentUser(null);
+    setBubbles([]);
+    setFriends([]);
+    setUserPublishedBubbles([]);
+    setDirectMessages({});
+    setSelectedFriendId(null);
+    setIsProfileModalOpen(false);
+  };
+
+  // 1. Loading Screen while attuning session
+  if (isLoadingUser) {
+    return (
+      <div className="min-h-screen bg-[#FAF7F2] flex items-center justify-center font-serif text-stone-600">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-12 h-12 rounded-full bg-amber-100/80 border border-amber-300 flex items-center justify-center text-2xl animate-float-slow shadow-xs">
+            🫧
+          </div>
+          <p className="text-sm font-medium tracking-wide">Attuning to the atmosphere...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // 2. Full Auth Guard: Unauthenticated visitors see Mindful Onboarding Journey
+  if (!currentUser) {
+    return (
+      <div className="min-h-screen bg-[#FAF7F2]">
+        <OnboardingModal
+          isOpen={true}
+          onComplete={(user) => {
+            setCurrentUser(user);
+            loadServerData(user);
+          }}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-b from-[#FAF8F5] via-[#F6F2EC] to-[#F1EAE2] text-[#2F2A26] flex flex-col font-sans selection:bg-amber-100 relative overflow-x-hidden">
       {/* Ambient background drifting bubbles */}
@@ -801,8 +746,16 @@ export default function App() {
             </button>
           </nav>
 
-          {/* Zone 3: 1 Primary Action + Avatar Studio Trigger */}
+          {/* Zone 3: Soap Mixture Vial + Avatar + Primary Action */}
           <div className="flex items-center gap-2.5 sm:gap-3 shrink-0">
+            {/* Soap Mixture Vial Widget */}
+            <MixtureVialWidget
+              mixtureVialMl={currentUser.mixtureVialMl ?? 100}
+              onVialRefilled={(newMl) =>
+                setCurrentUser((prev) => (prev ? { ...prev, mixtureVialMl: newMl } : null))
+              }
+            />
+
             <button
               onClick={() => setIsAvatarEditorOpen(true)}
               className="relative p-0.5 rounded-full bg-white ring-2 ring-white hover:ring-amber-300 transition-all shadow-xs"
@@ -961,6 +914,7 @@ export default function App() {
                   bubbles={bubbles}
                   currentUser={currentUser}
                   burstBubbleIdsToday={currentUser.burstBubbleIdsToday}
+                  weather={weather}
                   onBurstBubble={handleBurstBubble}
                   onCreateBubbleClick={() => setIsCreateBubbleOpen(true)}
                 />
@@ -1022,7 +976,7 @@ export default function App() {
         isOpen={isAvatarEditorOpen}
         onClose={() => setIsAvatarEditorOpen(false)}
         onSave={(newAvatar) => {
-          setCurrentUser((prev) => ({ ...prev, avatar: newAvatar }));
+          setCurrentUser((prev) => (prev ? { ...prev, avatar: newAvatar } : null));
           apiClient.updateAvatar(newAvatar);
         }}
       />
@@ -1033,13 +987,14 @@ export default function App() {
         isOpen={isProfileModalOpen}
         onClose={() => setIsProfileModalOpen(false)}
         onSave={(updated) => {
-          setCurrentUser((prev) => ({ ...prev, ...updated }));
+          setCurrentUser((prev) => (prev ? { ...prev, ...updated } : null));
           apiClient.updateProfile(updated);
         }}
         onOpenAvatarEditor={() => {
           setIsProfileModalOpen(false);
           setIsAvatarEditorOpen(true);
         }}
+        onLogout={handleLogout}
       />
 
       {/* 5. Moderation Warning & Suspension Modal */}

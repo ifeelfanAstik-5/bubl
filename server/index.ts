@@ -8,6 +8,7 @@ import { bubbleRoutes } from './routes/bubbles';
 import { orbitRoutes } from './routes/orbits';
 import { messageRoutes } from './routes/messages';
 import { devRoutes } from './routes/dev';
+import { weatherRoutes } from './routes/weather';
 import { checkDatabaseConnection } from './db';
 import dotenv from 'dotenv';
 
@@ -60,6 +61,7 @@ app.route('/api/users', userRoutes);
 app.route('/api', userRoutes); // aliases /api/me to /api/users/me
 app.route('/api/bubbles', bubbleRoutes);
 app.route('/api/orbits', orbitRoutes);
+app.route('/api/weather', weatherRoutes);
 app.route('/api/dev', devRoutes);
 // messages route handles /api/orbits/:friendId/messages
 app.route('/api/orbits', messageRoutes);

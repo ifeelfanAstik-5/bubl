@@ -3,15 +3,9 @@ import {
   BubblePost,
   Friend,
   DirectMessage,
-  AvatarConfig
+  AvatarConfig,
+  WeatherCondition
 } from '../../shared/types';
-import {
-  INITIAL_USER,
-  INITIAL_FRIENDS,
-  INITIAL_BUBBLES,
-  INITIAL_DIRECT_MESSAGES,
-  INITIAL_USER_PUBLISHED_BUBBLES
-} from '../data/mockData';
 
 const RAW_API_URL = (import.meta as any).env?.VITE_API_URL || '';
 const API_BASE = RAW_API_URL ? `${RAW_API_URL.replace(/\/+$/, '')}/api` : '/api';
@@ -39,6 +33,10 @@ class ApiClient {
     }
   }
 
+  hasToken(): boolean {
+    return Boolean(this.token);
+  }
+
   private async request<T>(endpoint: string, options: RequestInit = {}): Promise<T | null> {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
@@ -57,21 +55,74 @@ class ApiClient {
       });
 
       if (!res.ok) {
+        if (res.status === 401) {
+          // Token expired or invalid
+          this.clearToken();
+        }
         return null;
       }
 
       const json = await res.json();
       return json.data !== undefined ? json.data : json;
     } catch (e) {
-      // Backend offline or running in standalone static preview
       return null;
     }
   }
 
+  // AUTHENTICATION & ONBOARDING
+  async requestOtp(email: string): Promise<{ success: boolean; devCode?: string; message: string }> {
+    const res = await fetch(`${API_BASE}/auth/otp/request`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email })
+    });
+    return res.json();
+  }
+
+  async verifyOtp(email: string, code: string): Promise<{ token: string; user: UserProfile } | null> {
+    const res = await this.request<{ token: string; user: UserProfile }>('/auth/otp/verify', {
+      method: 'POST',
+      body: JSON.stringify({ email, code })
+    });
+    if (res?.token) {
+      this.setToken(res.token);
+    }
+    return res;
+  }
+
+  async onboard(payload: {
+    email: string;
+    code: string;
+    nickname: string;
+    age: number;
+    pronouns: string;
+    location: string;
+    latitude?: number;
+    longitude?: number;
+    bio: string;
+    exchangeInterest: string;
+    hobbies: string[];
+    avatar: AvatarConfig;
+  }): Promise<{ token: string; user: UserProfile } | null> {
+    const res = await this.request<{ token: string; user: UserProfile }>('/auth/onboard', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+    if (res?.token) {
+      this.setToken(res.token);
+    }
+    return res;
+  }
+
+  async logout(): Promise<boolean> {
+    await this.request('/auth/logout', { method: 'POST' });
+    this.clearToken();
+    return true;
+  }
+
   // USER & PROFILE
-  async getMe(): Promise<UserProfile> {
-    const data = await this.request<UserProfile>('/me');
-    return data || INITIAL_USER;
+  async getMe(): Promise<UserProfile | null> {
+    return this.request<UserProfile>('/me');
   }
 
   async updateProfile(updated: Partial<UserProfile>): Promise<boolean> {
@@ -90,17 +141,28 @@ class ApiClient {
     return res !== null;
   }
 
-  async awardBreathXP(xp: number): Promise<{ breathExp: number; breathLevel: number; dailyBreathEnergy: number } | null> {
-    return this.request('/me/breath-xp', {
-      method: 'POST',
-      body: JSON.stringify({ xp })
+  async takeBreathPause(): Promise<{ mixtureVialMl: number; breathExp: number; breathLevel: number } | null> {
+    return this.request('/users/breathe', {
+      method: 'POST'
     });
+  }
+
+  async refillVial(action: 'breath_pause' | 'read_letter'): Promise<{ mixtureVialMl: number } | null> {
+    return this.request('/auth/refill-vial', {
+      method: 'POST',
+      body: JSON.stringify({ action })
+    });
+  }
+
+  // ATMOSPHERIC WEATHER & WINDS
+  async getWeather(lat: number, lon: number): Promise<WeatherCondition | null> {
+    return this.request<WeatherCondition>(`/weather/current?lat=${lat}&lon=${lon}`);
   }
 
   // BUBBLES
   async getAtmosphereBubbles(): Promise<BubblePost[]> {
     const list = await this.request<BubblePost[]>('/bubbles/atmosphere');
-    return list && list.length > 0 ? list : INITIAL_BUBBLES;
+    return list || [];
   }
 
   async burstBubble(bubbleId: string): Promise<any> {
@@ -117,8 +179,9 @@ class ApiClient {
     bubbleColor: string;
     breathEffort: string;
     hobbies: string[];
+    mixtureEssence?: string;
     promptQuestion?: string;
-  }): Promise<any> {
+  }): Promise<{ success: boolean; bubbleId?: string; mixtureVialMl?: number; error?: string } | null> {
     return this.request('/bubbles', {
       method: 'POST',
       body: JSON.stringify(payload)
@@ -127,7 +190,7 @@ class ApiClient {
 
   async getMyBubbles(): Promise<BubblePost[]> {
     const list = await this.request<BubblePost[]>('/bubbles/mine');
-    return list || INITIAL_USER_PUBLISHED_BUBBLES;
+    return list || [];
   }
 
   async deleteBubble(bubbleId: string): Promise<boolean> {
@@ -140,7 +203,7 @@ class ApiClient {
   // ORBITS / CONNECTIONS
   async getOrbits(): Promise<Friend[]> {
     const list = await this.request<Friend[]>('/orbits');
-    return list && list.length > 0 ? list : INITIAL_FRIENDS;
+    return list || [];
   }
 
   async releaseOrbit(friendId: string): Promise<boolean> {
@@ -168,7 +231,7 @@ class ApiClient {
   // DISPATCHES / MESSAGES
   async getMessages(friendId: string): Promise<DirectMessage[]> {
     const list = await this.request<DirectMessage[]>(`/orbits/${friendId}/messages`);
-    return list || (INITIAL_DIRECT_MESSAGES[friendId] || []);
+    return list || [];
   }
 
   async sendMessage(

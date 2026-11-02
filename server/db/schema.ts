@@ -1,4 +1,4 @@
-import { pgTable, text, integer, bigint, boolean, timestamp, jsonb } from 'drizzle-orm/pg-core';
+import { pgTable, text, integer, bigint, boolean, timestamp, jsonb, real } from 'drizzle-orm/pg-core';
 import { relations } from 'drizzle-orm';
 import { AvatarConfig, MediaAttachment } from '../../shared/types';
 
@@ -10,6 +10,8 @@ export const users = pgTable('users', {
   age: integer('age').notNull().default(24),
   pronouns: text('pronouns').notNull().default('they/them'),
   location: text('location').notNull().default('Earth'),
+  latitude: real('latitude'),
+  longitude: real('longitude'),
   bio: text('bio').notNull().default(''),
   exchangeInterest: text('exchange_interest').notNull().default('Literature & Philosophy Discussions'),
   avatar: jsonb('avatar').$type<AvatarConfig>().notNull().default({
@@ -23,9 +25,12 @@ export const users = pgTable('users', {
     clothingColor: '#7A8B7B',
     bgTint: '#E8EFE9'
   }),
+  // Breath & Soap Mixture Vial system
   breathLevel: integer('breath_level').notNull().default(1),
   breathExp: integer('breath_exp').notNull().default(0),
   dailyBreathEnergy: integer('daily_breath_energy').notNull().default(100),
+  mixtureVialMl: integer('mixture_vial_ml').notNull().default(100),
+  lastDewRefillDate: text('last_dew_refill_date'),
   dailyBurstsRemaining: integer('daily_bursts_remaining').notNull().default(3),
   dailyBurstsResetDate: text('daily_bursts_reset_date').notNull().default('2026-11-01'),
   lastBubblePublishedAt: bigint('last_bubble_published_at', { mode: 'number' }),
@@ -58,6 +63,9 @@ export const bubbles = pgTable('bubbles', {
   promptQuestion: text('prompt_question'),
   bubbleType: text('bubble_type').notNull().default('thought'),
   bubbleColor: text('bubble_color').notNull().default('#8D7B68'),
+  mixtureEssence: text('mixture_essence'),
+  latitude: real('latitude'),
+  longitude: real('longitude'),
   distanceKm: integer('distance_km').notNull().default(4200),
   breathEffort: text('breath_effort').notNull().default('balanced'),
   isUserBubble: boolean('is_user_bubble').notNull().default(false),

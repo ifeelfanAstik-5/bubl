@@ -36,6 +36,8 @@ export interface UserProfile {
   age: number;
   pronouns: string;
   location: string;
+  latitude?: number;
+  longitude?: number;
   bio: string;
   languages: string[];
   hobbies: string[];
@@ -45,10 +47,12 @@ export interface UserProfile {
   dailyBurstsRemaining: number; // Max 3 bursts out of 5 daily drifting bubbles
   dailyBurstsResetDate: string; // YYYY-MM-DD
   burstBubbleIdsToday: string[]; // List of IDs burst today
-  // Breath system
+  // Breath & Soap Mixture Vial system
   breathLevel: number;
   breathExp: number;
   dailyBreathEnergy: number; // e.g. 100/100
+  mixtureVialMl: number; // 0 to 100ml of Soap Mixture
+  lastDewRefillDate?: string; // YYYY-MM-DD
   // Bubble Type unlocks
   unlockedBubbleTypes: BubbleType[];
   // Moderation & Suspension system
@@ -117,6 +121,15 @@ export interface Friend {
   unreadCount?: number;
 }
 
+export interface WeatherCondition {
+  temperatureC: number;
+  windSpeedKmH: number;
+  windDirectionDeg: number;
+  weatherCode: number;
+  conditionDescription: string;
+  calmnessLevel: 'calm' | 'breeze' | 'gale';
+}
+
 export interface BubblePost {
   id: string;
   authorId: string;
@@ -124,6 +137,9 @@ export interface BubblePost {
   authorAge: number;
   authorLocation: string;
   authorAvatar: AvatarConfig;
+  latitude?: number;
+  longitude?: number;
+  mixtureEssence?: string;
   title: string;
   content: string;
   hobbies: string[];

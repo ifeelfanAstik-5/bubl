@@ -5,8 +5,12 @@ import { db, checkDatabaseConnection } from '../db';
 import { messages, connections, users } from '../db/schema';
 import { eq, or, and, asc } from 'drizzle-orm';
 import { getUserIdFromRequest } from './auth';
-import { INITIAL_DIRECT_MESSAGES } from '../../src/data/mockData';
 import { DirectMessage } from '../../shared/types';
+import {
+  getAtmosphericWind,
+  calculateGeodesicDistanceKm,
+  calculateWindPacedTransitMs
+} from '../services/weatherService';
 
 export const messageRoutes = new Hono();
 
@@ -17,8 +21,7 @@ messageRoutes.get('/:friendId/messages', async (c) => {
   const isDbConnected = await checkDatabaseConnection();
 
   if (!isDbConnected) {
-    const list = INITIAL_DIRECT_MESSAGES[friendId] || [];
-    return c.json({ success: true, data: list });
+    return c.json({ success: true, data: [] });
   }
 
   try {
@@ -27,14 +30,13 @@ messageRoutes.get('/:friendId/messages', async (c) => {
       .from(connections)
       .where(
         or(
-          and(eq(connections.userAId, userId), eq(connections.userBId, friendId)),
-          and(eq(connections.userAId, friendId), eq(connections.userBId, userId))
+          and(eq(connections.userAId, userId || ''), eq(connections.userBId, friendId)),
+          and(eq(connections.userAId, friendId), eq(connections.userBId, userId || ''))
         )
       );
 
     if (connRecords.length === 0) {
-      const list = INITIAL_DIRECT_MESSAGES[friendId] || [];
-      return c.json({ success: true, data: list });
+      return c.json({ success: true, data: [] });
     }
 
     const conn = connRecords[0];
@@ -67,8 +69,7 @@ messageRoutes.get('/:friendId/messages', async (c) => {
     return c.json({ success: true, data: evaluated });
   } catch (error) {
     console.error(error);
-    const list = INITIAL_DIRECT_MESSAGES[friendId] || [];
-    return c.json({ success: true, data: list });
+    return c.json({ success: true, data: [] });
   }
 });
 
@@ -82,20 +83,45 @@ const SendMessageSchema = z.object({
 // POST /api/orbits/:friendId/messages (Send paced bubble dispatch)
 messageRoutes.post('/:friendId/messages', zValidator('json', SendMessageSchema), async (c) => {
   const userId = getUserIdFromRequest(c);
+  if (!userId) {
+    return c.json({ success: false, error: 'Unauthorized.' }, 401);
+  }
   const friendId = c.req.param('friendId');
   const data = c.req.valid('json');
 
   const now = Date.now();
-  // Delivery pacing based on breath effort
-  const deliveryDurationMs =
-    data.breathEffort === 'deep'
-      ? 18 * 60 * 1000
-      : data.breathEffort === 'gentle'
-      ? 15 * 60 * 1000
-      : 10 * 60 * 1000;
-  const arrivalAt = now + deliveryDurationMs;
-
   const isDbConnected = await checkDatabaseConnection();
+
+  let distanceKm = 1200;
+  let windSpeedKmH = 9;
+
+  if (isDbConnected) {
+    try {
+      const senderRecords = await db.select().from(users).where(eq(users.id, userId));
+      const recipientRecords = await db.select().from(users).where(eq(users.id, friendId));
+      if (senderRecords.length > 0 && recipientRecords.length > 0) {
+        const s = senderRecords[0];
+        const r = recipientRecords[0];
+        if (s.latitude && s.longitude && r.latitude && r.longitude) {
+          distanceKm = calculateGeodesicDistanceKm(s.latitude, s.longitude, r.latitude, r.longitude);
+          const weather = await getAtmosphericWind(s.latitude, s.longitude);
+          windSpeedKmH = weather.windSpeedKmH;
+        }
+
+        // Award +10ml Soap Mixture for thoughtful letter reply
+        const currentVial = s.mixtureVialMl ?? 100;
+        await db
+          .update(users)
+          .set({ mixtureVialMl: Math.min(100, currentVial + 10), updatedAt: new Date() })
+          .where(eq(users.id, userId));
+      }
+    } catch (e) {
+      console.error('Error computing letter transit:', e);
+    }
+  }
+
+  const deliveryDurationMs = calculateWindPacedTransitMs(distanceKm, windSpeedKmH, data.breathEffort);
+  const arrivalAt = now + deliveryDurationMs;
 
   if (!isDbConnected) {
     const fallbackMsg: DirectMessage = {

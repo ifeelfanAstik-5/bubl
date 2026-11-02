@@ -28,6 +28,9 @@ devRoutes.post('/accelerate-winds', async (c) => {
 // POST /api/dev/reset-suspension (Clear moderation strikes and lift suspension)
 devRoutes.post('/reset-suspension', async (c) => {
   const userId = getUserIdFromRequest(c);
+  if (!userId) {
+    return c.json({ success: false, error: 'Unauthorized' }, 401);
+  }
   const isDbConnected = await checkDatabaseConnection();
 
   if (isDbConnected) {

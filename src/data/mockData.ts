@@ -268,7 +268,8 @@ export const INITIAL_USER: UserProfile = {
   unlockedBubbleTypes: ['thought', 'echo'],
   moderationWarningsCount: 0,
   suspendedUntil: null,
-  moderationWarningsHistory: []
+  moderationWarningsHistory: [],
+  mixtureVialMl: 100
 };
 
 export const INITIAL_FRIENDS: Friend[] = [

@@ -5,7 +5,6 @@ import { db, checkDatabaseConnection } from '../db';
 import { users, userHobbies, userUnlockedTypes } from '../db/schema';
 import { eq } from 'drizzle-orm';
 import { getUserIdFromRequest } from './auth';
-import { INITIAL_USER } from '../../src/data/mockData';
 import { UserProfile, BubbleType } from '../../shared/types';
 
 export const userRoutes = new Hono();
@@ -13,16 +12,19 @@ export const userRoutes = new Hono();
 // GET /api/me
 userRoutes.get('/me', async (c) => {
   const userId = getUserIdFromRequest(c);
+  if (!userId) {
+    return c.json({ success: false, error: 'Unauthorized' }, 401);
+  }
   const isDbConnected = await checkDatabaseConnection();
 
   if (!isDbConnected) {
-    return c.json({ success: true, data: INITIAL_USER });
+    return c.json({ success: false, error: 'Database offline' }, 503);
   }
 
   try {
     const userRecords = await db.select().from(users).where(eq(users.id, userId));
     if (userRecords.length === 0) {
-      return c.json({ success: true, data: INITIAL_USER });
+      return c.json({ success: false, error: 'User not found' }, 404);
     }
 
     const u = userRecords[0];
@@ -31,11 +33,25 @@ userRoutes.get('/me', async (c) => {
 
     const todayStr = new Date().toISOString().split('T')[0];
     let dailyBurstsRemaining = u.dailyBurstsRemaining;
+    let currentVial = u.mixtureVialMl ?? 100;
+    let didUpdate = false;
+
     if (u.dailyBurstsResetDate !== todayStr) {
       dailyBurstsRemaining = 3;
+      currentVial = Math.min(100, currentVial + 30);
+      didUpdate = true;
+    }
+
+    if (didUpdate) {
       await db
         .update(users)
-        .set({ dailyBurstsRemaining: 3, dailyBurstsResetDate: todayStr })
+        .set({
+          dailyBurstsRemaining: 3,
+          dailyBurstsResetDate: todayStr,
+          mixtureVialMl: currentVial,
+          lastDewRefillDate: todayStr,
+          updatedAt: new Date()
+        })
         .where(eq(users.id, userId));
     }
 
@@ -46,6 +62,8 @@ userRoutes.get('/me', async (c) => {
       age: u.age,
       pronouns: u.pronouns,
       location: u.location,
+      latitude: u.latitude || undefined,
+      longitude: u.longitude || undefined,
       bio: u.bio,
       languages: ['English'],
       exchangeInterest: u.exchangeInterest,
@@ -59,6 +77,8 @@ userRoutes.get('/me', async (c) => {
       breathLevel: u.breathLevel,
       breathExp: u.breathExp,
       dailyBreathEnergy: u.dailyBreathEnergy,
+      mixtureVialMl: currentVial,
+      lastDewRefillDate: todayStr,
       moderationWarningsCount: u.moderationWarningsCount,
       suspendedUntil: u.suspendedUntil,
       moderationWarningsHistory: []
@@ -67,7 +87,52 @@ userRoutes.get('/me', async (c) => {
     return c.json({ success: true, data: profile });
   } catch (error) {
     console.error(error);
-    return c.json({ success: true, data: INITIAL_USER });
+    return c.json({ success: false, error: 'Failed to fetch user profile' }, 500);
+  }
+});
+
+// POST /api/users/breathe (Mindful breathing pause: awards +15ml Soap Mixture)
+userRoutes.post('/breathe', async (c) => {
+  const userId = getUserIdFromRequest(c);
+  if (!userId) {
+    return c.json({ success: false, error: 'Unauthorized' }, 401);
+  }
+
+  const isDbConnected = await checkDatabaseConnection();
+  if (!isDbConnected) {
+    return c.json({ success: true, mixtureVialMl: 100 });
+  }
+
+  try {
+    const userRecords = await db.select().from(users).where(eq(users.id, userId));
+    if (userRecords.length === 0) {
+      return c.json({ success: false, error: 'User not found' }, 404);
+    }
+
+    const u = userRecords[0];
+    const newVial = Math.min(100, (u.mixtureVialMl ?? 100) + 15);
+    const newExp = u.breathExp + 10;
+    const newLevel = newExp >= 50 ? 3 : newExp >= 20 ? 2 : 1;
+
+    await db
+      .update(users)
+      .set({
+        mixtureVialMl: newVial,
+        breathExp: newExp,
+        breathLevel: newLevel,
+        updatedAt: new Date()
+      })
+      .where(eq(users.id, userId));
+
+    return c.json({
+      success: true,
+      mixtureVialMl: newVial,
+      breathExp: newExp,
+      breathLevel: newLevel,
+      message: 'Mindful breath completed: +15ml Soap Mixture infused into your vial.'
+    });
+  } catch (e) {
+    return c.json({ success: false, error: 'Failed to record breath pause' }, 500);
   }
 });
 
@@ -86,6 +151,9 @@ const UpdateProfileSchema = z.object({
 // PATCH /api/me
 userRoutes.patch('/me', zValidator('json', UpdateProfileSchema), async (c) => {
   const userId = getUserIdFromRequest(c);
+  if (!userId) {
+    return c.json({ success: false, error: 'Unauthorized' }, 401);
+  }
   const data = c.req.valid('json');
   const isDbConnected = await checkDatabaseConnection();
 
@@ -140,6 +208,9 @@ userRoutes.patch('/me', zValidator('json', UpdateProfileSchema), async (c) => {
 // PATCH /api/me/avatar
 userRoutes.patch('/me/avatar', async (c) => {
   const userId = getUserIdFromRequest(c);
+  if (!userId) {
+    return c.json({ success: false, error: 'Unauthorized' }, 401);
+  }
   const avatarConfig = await c.req.json();
   const isDbConnected = await checkDatabaseConnection();
 
@@ -160,6 +231,9 @@ userRoutes.patch('/me/avatar', async (c) => {
 // POST /api/me/breath-xp
 userRoutes.post('/me/breath-xp', async (c) => {
   const userId = getUserIdFromRequest(c);
+  if (!userId) {
+    return c.json({ success: false, error: 'Unauthorized' }, 401);
+  }
   const { xp } = await c.req.json();
   const isDbConnected = await checkDatabaseConnection();
 

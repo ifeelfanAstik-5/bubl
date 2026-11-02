@@ -3,32 +3,62 @@ import { z } from 'zod';
 import { zValidator } from '@hono/zod-validator';
 import { db, checkDatabaseConnection } from '../db';
 import { bubbles, bubbleHobbies, burstLogs, users } from '../db/schema';
-import { eq, and, desc } from 'drizzle-orm';
+import { eq, and, desc, ne } from 'drizzle-orm';
 import { getUserIdFromRequest } from './auth';
-import { INITIAL_BUBBLES, INITIAL_USER_PUBLISHED_BUBBLES } from '../../src/data/mockData';
 import { analyzeTitle, analyzeContent } from '../../shared/moderation';
-import { WEEKLY_PUBLISH_INTERVAL_MS, DAILY_BURSTS_LIMIT } from '../../shared/constants';
+import { WEEKLY_PUBLISH_INTERVAL_MS } from '../../shared/constants';
 import { BubblePost } from '../../shared/types';
+import { calculateGeodesicDistanceKm } from '../services/weatherService';
 
 export const bubbleRoutes = new Hono();
 
-// GET /api/bubbles/atmosphere (5 Daily Drifting Bubbles)
+const DEFAULT_AVATAR = {
+  skinColor: '#F5D0C5',
+  hairStyle: 'wavy' as const,
+  hairColor: '#3A2E2B',
+  eyeStyle: 'calm' as const,
+  mouthStyle: 'subtle_smile' as const,
+  glassesStyle: 'round' as const,
+  clothingStyle: 'sweater' as const,
+  clothingColor: '#7A8B7B',
+  bgTint: '#E8EFE9'
+};
+
+// GET /api/bubbles/atmosphere (Authentic real bubbles drifting in the sky)
 bubbleRoutes.get('/atmosphere', async (c) => {
+  const userId = getUserIdFromRequest(c);
   const isDbConnected = await checkDatabaseConnection();
 
   if (!isDbConnected) {
-    return c.json({ success: true, data: INITIAL_BUBBLES });
+    return c.json({ success: true, data: [] });
   }
 
   try {
+    // Get viewer coordinates if logged in
+    let viewerLat = 35.0116;
+    let viewerLon = 135.7681;
+    if (userId) {
+      const viewerRecs = await db.select().from(users).where(eq(users.id, userId));
+      if (viewerRecs.length > 0 && viewerRecs[0].latitude && viewerRecs[0].longitude) {
+        viewerLat = viewerRecs[0].latitude;
+        viewerLon = viewerRecs[0].longitude;
+      }
+    }
+
+    // Query bubbles published by other users that are clean
+    const query = userId
+      ? and(ne(bubbles.authorId, userId), eq(bubbles.moderationStatus, 'clean'))
+      : eq(bubbles.moderationStatus, 'clean');
+
     const records = await db
       .select()
       .from(bubbles)
-      .where(and(eq(bubbles.isUserBubble, false), eq(bubbles.moderationStatus, 'clean')))
+      .where(query)
+      .orderBy(desc(bubbles.createdAt))
       .limit(5);
 
     if (records.length === 0) {
-      return c.json({ success: true, data: INITIAL_BUBBLES });
+      return c.json({ success: true, data: [] });
     }
 
     const items: BubblePost[] = [];
@@ -41,12 +71,18 @@ bubbleRoutes.get('/atmosphere', async (c) => {
       const authorRecords = await db.select().from(users).where(eq(users.id, b.authorId));
       const author = authorRecords[0];
 
+      // Calculate actual physical distance between user coordinates
+      let distanceKm = b.distanceKm || 3200;
+      if (b.latitude && b.longitude) {
+        distanceKm = calculateGeodesicDistanceKm(viewerLat, viewerLon, b.latitude, b.longitude);
+      }
+
       items.push({
         id: b.id,
         authorId: b.authorId,
         authorName: author?.nickname || 'Penpal',
         authorAge: author?.age || 25,
-        authorLocation: author?.location || 'Florence, Italy',
+        authorLocation: author?.location || 'Atmosphere',
         authorAvatar: author?.avatar || {
           skinColor: '#F7D9C4',
           hairStyle: 'curly',
@@ -58,12 +94,15 @@ bubbleRoutes.get('/atmosphere', async (c) => {
           clothingColor: '#C48B71',
           bgTint: '#FBECE3'
         },
+        latitude: b.latitude || undefined,
+        longitude: b.longitude || undefined,
+        mixtureEssence: b.mixtureEssence || 'Pure Soap Solution',
         title: b.title,
         content: b.content,
         promptQuestion: b.promptQuestion || undefined,
         bubbleType: b.bubbleType as any,
         bubbleColor: b.bubbleColor,
-        distanceKm: b.distanceKm,
+        distanceKm,
         publishedAt: b.createdAt.getTime(),
         hobbies: hRecords.map((h) => h.hobby),
         isUserBubble: false,
@@ -74,13 +113,16 @@ bubbleRoutes.get('/atmosphere', async (c) => {
     return c.json({ success: true, data: items });
   } catch (error) {
     console.error(error);
-    return c.json({ success: true, data: INITIAL_BUBBLES });
+    return c.json({ success: true, data: [] });
   }
 });
 
 // POST /api/bubbles/burst
 bubbleRoutes.post('/burst', async (c) => {
   const userId = getUserIdFromRequest(c);
+  if (!userId) {
+    return c.json({ success: false, error: 'Unauthorized' }, 401);
+  }
   const { bubbleId } = await c.req.json();
   const isDbConnected = await checkDatabaseConnection();
 
@@ -161,6 +203,9 @@ const CreateBubbleSchema = z.object({
 // POST /api/bubbles (Publish a weekly bubble)
 bubbleRoutes.post('/', zValidator('json', CreateBubbleSchema), async (c) => {
   const userId = getUserIdFromRequest(c);
+  if (!userId) {
+    return c.json({ success: false, error: 'Unauthorized' }, 401);
+  }
   const data = c.req.valid('json');
 
   // 1. Strict Server-Side Title Analysis (10 words max, clean of sensitive keywords)
@@ -195,7 +240,7 @@ bubbleRoutes.post('/', zValidator('json', CreateBubbleSchema), async (c) => {
       authorName: 'Haruki',
       authorAge: 26,
       authorLocation: 'Kyoto, Japan',
-      authorAvatar: INITIAL_USER_PUBLISHED_BUBBLES[0].authorAvatar,
+      authorAvatar: DEFAULT_AVATAR,
       title: data.title,
       content: data.content,
       hobbies: data.hobbies,
@@ -211,29 +256,43 @@ bubbleRoutes.post('/', zValidator('json', CreateBubbleSchema), async (c) => {
   }
 
   try {
-    // 3. Check 1-Bubble-per-week quota
+    // 3. Check User & Mixture Vial (Requires 25ml)
     const userRecords = await db.select().from(users).where(eq(users.id, userId));
-    if (userRecords.length > 0) {
-      const u = userRecords[0];
-      if (u.suspendedUntil && u.suspendedUntil > Date.now()) {
-        return c.json({ success: false, error: 'Account suspended.' }, 403);
-      }
-      if (
-        u.lastBubblePublishedAt &&
-        Date.now() - u.lastBubblePublishedAt < WEEKLY_PUBLISH_INTERVAL_MS
-      ) {
-        const daysLeft = Math.ceil(
-          (WEEKLY_PUBLISH_INTERVAL_MS - (Date.now() - u.lastBubblePublishedAt)) /
-            (24 * 60 * 60 * 1000)
-        );
-        return c.json(
-          {
-            success: false,
-            error: `Weekly quota: You may blow a new bubble in ${daysLeft} days.`
-          },
-          429
-        );
-      }
+    if (userRecords.length === 0) {
+      return c.json({ success: false, error: 'User not found.' }, 404);
+    }
+    const u = userRecords[0];
+
+    if (u.suspendedUntil && u.suspendedUntil > Date.now()) {
+      return c.json({ success: false, error: 'Account suspended.' }, 403);
+    }
+
+    const currentVial = u.mixtureVialMl ?? 100;
+    if (currentVial < 25) {
+      return c.json(
+        {
+          success: false,
+          error: 'Your Soap Mixture Vial is low (25ml required to blow a bubble). Take a mindful breath pause or await morning dew.'
+        },
+        400
+      );
+    }
+
+    if (
+      u.lastBubblePublishedAt &&
+      Date.now() - u.lastBubblePublishedAt < WEEKLY_PUBLISH_INTERVAL_MS
+    ) {
+      const daysLeft = Math.ceil(
+        (WEEKLY_PUBLISH_INTERVAL_MS - (Date.now() - u.lastBubblePublishedAt)) /
+          (24 * 60 * 60 * 1000)
+      );
+      return c.json(
+        {
+          success: false,
+          error: `Weekly quota: You may blow a new bubble in ${daysLeft} days.`
+        },
+        429
+      );
     }
 
     const bubbleId = `bubble_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
@@ -246,6 +305,9 @@ bubbleRoutes.post('/', zValidator('json', CreateBubbleSchema), async (c) => {
       bubbleType: data.bubbleType,
       bubbleColor: data.bubbleColor,
       breathEffort: data.breathEffort,
+      mixtureEssence: (data as any).mixtureEssence || 'Mindful Solution',
+      latitude: u.latitude,
+      longitude: u.longitude,
       isUserBubble: true,
       moderationStatus: 'clean',
       distanceKm: 0
@@ -260,14 +322,15 @@ bubbleRoutes.post('/', zValidator('json', CreateBubbleSchema), async (c) => {
       });
     }
 
-    // Award 25 Breath XP and update lastBubblePublishedAt
-    const author = userRecords[0];
-    const newExp = (author?.breathExp || 0) + 25;
+    // Award 25 Breath XP, deduct 25ml mixture vial, and update lastBubblePublishedAt
+    const newExp = (u.breathExp || 0) + 25;
     const newLevel = newExp >= 50 ? 3 : newExp >= 20 ? 2 : 1;
+    const newVial = Math.max(0, currentVial - 25);
 
     await db
       .update(users)
       .set({
+        mixtureVialMl: newVial,
         lastBubblePublishedAt: Date.now(),
         breathExp: newExp,
         breathLevel: newLevel,
@@ -277,8 +340,9 @@ bubbleRoutes.post('/', zValidator('json', CreateBubbleSchema), async (c) => {
 
     return c.json({
       success: true,
-      message: 'Bubble released into the atmosphere! 25 Breath XP awarded.',
-      bubbleId
+      message: 'Bubble blown into the atmosphere! 25ml Soap Mixture spent, 25 Breath XP awarded.',
+      bubbleId,
+      mixtureVialMl: newVial
     });
   } catch (error) {
     console.error(error);
@@ -289,10 +353,13 @@ bubbleRoutes.post('/', zValidator('json', CreateBubbleSchema), async (c) => {
 // GET /api/bubbles/mine (User's published bubbles archive)
 bubbleRoutes.get('/mine', async (c) => {
   const userId = getUserIdFromRequest(c);
+  if (!userId) {
+    return c.json({ success: false, error: 'Unauthorized' }, 401);
+  }
   const isDbConnected = await checkDatabaseConnection();
 
   if (!isDbConnected) {
-    return c.json({ success: true, data: INITIAL_USER_PUBLISHED_BUBBLES });
+    return c.json({ success: true, data: [] });
   }
 
   try {
@@ -303,7 +370,7 @@ bubbleRoutes.get('/mine', async (c) => {
       .orderBy(desc(bubbles.createdAt));
 
     if (records.length === 0) {
-      return c.json({ success: true, data: INITIAL_USER_PUBLISHED_BUBBLES });
+      return c.json({ success: true, data: [] });
     }
 
     const list: BubblePost[] = [];
@@ -322,7 +389,7 @@ bubbleRoutes.get('/mine', async (c) => {
         authorName: author?.nickname || 'Me',
         authorAge: author?.age || 26,
         authorLocation: author?.location || 'Kyoto, Japan',
-        authorAvatar: author?.avatar || INITIAL_USER_PUBLISHED_BUBBLES[0].authorAvatar,
+        authorAvatar: author?.avatar || DEFAULT_AVATAR,
         title: b.title,
         content: b.content,
         promptQuestion: b.promptQuestion || undefined,
@@ -339,7 +406,7 @@ bubbleRoutes.get('/mine', async (c) => {
     return c.json({ success: true, data: list });
   } catch (error) {
     console.error(error);
-    return c.json({ success: true, data: INITIAL_USER_PUBLISHED_BUBBLES });
+    return c.json({ success: true, data: [] });
   }
 });
 

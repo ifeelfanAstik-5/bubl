@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { BubblePost, UserProfile, BubbleType } from '../types';
-import { ALL_HOBBIES, BUBBLE_PALETTES, BUBBLE_TYPES, THOUGHT_SPARKS, SENSITIVE_ANTI_DATING_KEYWORDS, HOBBY_ICONS } from '../data/mockData';
+import { ALL_HOBBIES, BUBBLE_PALETTES, BUBBLE_TYPES, SENSITIVE_ANTI_DATING_KEYWORDS, HOBBY_ICONS } from '../data/mockData';
 import {
   analyzeTitle,
   cleanseTitle,
@@ -20,9 +20,19 @@ import {
   Flame,
   Feather,
   Lock,
-  Wind
+  Wind,
+  Droplets
 } from 'lucide-react';
-import { playBreezeBlowingSound } from '../services/soundEffects';
+import { playWandBlowSound, playVialSloshSound } from '../services/soundEffects';
+
+const MIXTURE_RECIPES = [
+  { title: 'Solitude & Warm Tea', prompt: 'What is a quiet ritual or contemplation that centers you when the world feels hurried?' },
+  { title: 'Midnight Echo', prompt: 'A question that has been lingering in your mind lately without an easy answer?' },
+  { title: 'Unread Philosophy', prompt: 'What is an idea or perspective that completely shifted how you view daily existence?' },
+  { title: 'Gentle Nostalgia', prompt: 'A memory or place from your past that still carries poignant emotional warmth?' },
+  { title: 'Craft & Solace', prompt: 'What is something you love making or learning purely for the peace of the process?' },
+  { title: 'The Paced Life', prompt: 'What does taking your time mean to you in an era addicted to instant replies?' }
+];
 
 interface CreateBubbleModalProps {
   user: UserProfile;
@@ -73,7 +83,8 @@ export const CreateBubbleModal: React.FC<CreateBubbleModalProps> = ({
   const timeSinceLastPublish = user.lastBubblePublishedAt
     ? now - user.lastBubblePublishedAt
     : Infinity;
-  const canPublish = timeSinceLastPublish >= SEVEN_DAYS_MS && !isSuspended;
+  const hasEnoughMixture = (user.mixtureVialMl ?? 100) >= 25;
+  const canPublish = timeSinceLastPublish >= SEVEN_DAYS_MS && !isSuspended && hasEnoughMixture;
   const daysUntilNextPublish = canPublish
     ? 0
     : Math.ceil((SEVEN_DAYS_MS - timeSinceLastPublish) / (24 * 60 * 60 * 1000));
@@ -160,7 +171,7 @@ export const CreateBubbleModal: React.FC<CreateBubbleModalProps> = ({
       return;
     }
 
-    playBreezeBlowingSound();
+    playWandBlowSound();
     onPublish({
       authorId: user.id,
       authorName: user.nickname,
@@ -304,33 +315,34 @@ export const CreateBubbleModal: React.FC<CreateBubbleModalProps> = ({
             </div>
           )}
 
-          {/* Thought Sparks (Slowly-style writing inspiration) */}
+          {/* Thought Mixture Formulations (Soap Solution Recipes) */}
           <div className="p-3.5 bg-amber-50/80 border border-amber-200/80 rounded-xl space-y-2">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-1.5 text-xs font-semibold text-amber-950">
-                <Sparkles className="w-3.5 h-3.5 text-amber-600" />
-                <span>Thought Sparks (Slowly-inspired writing prompts)</span>
+                <Droplets className="w-3.5 h-3.5 text-teal-700" />
+                <span>Thought Mixture Formulations (Soap Solution Recipes)</span>
               </div>
-              <span className="text-[10px] text-amber-700/80">Click a spark to inspire your title & prose</span>
+              <span className="text-[10px] text-amber-700/80">Select an essence recipe to infuse your mixture</span>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              {THOUGHT_SPARKS.map((spark, idx) => (
+              {MIXTURE_RECIPES.map((recipe, idx) => (
                 <button
                   key={idx}
                   type="button"
                   onClick={() => {
-                    setTitle(spark.title);
+                    setTitle(recipe.title);
                     if (!content.trim() || content.startsWith('Reflection on:')) {
-                      setContent(`Reflection on "${spark.prompt}":\n\n`);
+                      setContent(`Reflection on "${recipe.prompt}":\n\n`);
                     }
+                    playVialSloshSound();
                   }}
                   className="text-left p-2 rounded-lg bg-white hover:bg-amber-100/50 border border-amber-200 hover:border-amber-400 transition-all text-xs group"
                 >
                   <span className="font-semibold text-stone-900 block group-hover:text-amber-900 text-[11px]">
-                    ✦ {spark.title}
+                    🧪 {recipe.title}
                   </span>
                   <span className="text-[10px] text-stone-500 line-clamp-2 mt-0.5 leading-snug">
-                    {spark.prompt}
+                    {recipe.prompt}
                   </span>
                 </button>
               ))}
@@ -580,9 +592,10 @@ export const CreateBubbleModal: React.FC<CreateBubbleModalProps> = ({
             <button
               onClick={handleValidateAndPublish}
               disabled={!canPublish}
-              className="px-5 py-2 text-xs font-medium text-white bg-stone-900 hover:bg-stone-800 rounded-xl transition-colors shadow-xs disabled:opacity-40 disabled:cursor-not-allowed"
+              className="px-5 py-2 text-xs font-medium text-white bg-stone-900 hover:bg-stone-800 rounded-xl transition-colors shadow-xs disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
             >
-              Blow & Release Bubble
+              <span>🧪</span>
+              <span>Dip Wand & Blow Bubble (-25ml)</span>
             </button>
           </div>
         </div>

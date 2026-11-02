@@ -26,6 +26,7 @@ interface ProfileModalProps {
   onClose: () => void;
   onSave: (updated: Partial<UserProfile>) => void;
   onOpenAvatarEditor: () => void;
+  onLogout?: () => void;
 }
 
 export const ProfileModal: React.FC<ProfileModalProps> = ({
@@ -33,7 +34,8 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
   isOpen,
   onClose,
   onSave,
-  onOpenAvatarEditor
+  onOpenAvatarEditor,
+  onLogout
 }) => {
   const [activeTab, setActiveTab] = useState<'identity' | 'breath' | 'passions'>('identity');
   const [hobbyCategoryFilter, setHobbyCategoryFilter] = useState<string>('all');
@@ -595,9 +597,20 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
 
         {/* Footer Bar */}
         <div className="px-6 sm:px-8 py-4 border-t border-stone-200/70 bg-[#FAF7F2] flex flex-col sm:flex-row items-center justify-between gap-3 relative z-10">
-          <div className="flex items-center gap-1.5 text-[11px] text-stone-400 font-mono">
-            <Sparkles className="w-3.5 h-3.5 text-amber-500 shrink-0" />
-            <span>Soul connection guaranteed: zero selfies, zero metrics</span>
+          <div className="flex items-center gap-3 w-full sm:w-auto">
+            {onLogout && (
+              <button
+                type="button"
+                onClick={onLogout}
+                className="px-3 py-1.5 text-xs font-serif text-rose-700 hover:text-rose-800 hover:bg-rose-50 rounded-xl transition-colors border border-rose-200"
+              >
+                Sign Out
+              </button>
+            )}
+            <div className="flex items-center gap-1.5 text-[11px] text-stone-400 font-mono">
+              <Sparkles className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+              <span>Zero selfies, zero metrics</span>
+            </div>
           </div>
 
           <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
