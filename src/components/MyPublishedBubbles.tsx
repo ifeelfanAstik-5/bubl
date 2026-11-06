@@ -143,12 +143,12 @@ export const MyPublishedBubbles: React.FC<MyPublishedBubblesProps> = ({
                 )}
 
                 <div className="flex items-center gap-1.5 text-[11px] text-stone-400 pt-0.5">
-                  {bubble.hobbies.map((h, i) => (
+                  {(bubble.hobbies || []).map((h, i) => (
                     <React.Fragment key={h}>
                       <span className="bg-stone-100/80 px-2 py-0.5 rounded-md text-stone-600">
                         {h}
                       </span>
-                      {i < bubble.hobbies.length - 1 && <span>·</span>}
+                      {i < (bubble.hobbies || []).length - 1 && <span>·</span>}
                     </React.Fragment>
                   ))}
                   <span className="text-stone-300">·</span>

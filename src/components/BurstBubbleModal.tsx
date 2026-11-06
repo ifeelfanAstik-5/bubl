@@ -164,7 +164,7 @@ export const BurstBubbleModal: React.FC<BurstBubbleModalProps> = ({
               <Sparkles className="w-4 h-4 text-amber-600 shrink-0" />
               <span>
                 Resonated through shared passion for{' '}
-                {bubble.hobbies.filter((h) => currentUser.hobbies.includes(h)).join(', ')}.
+                {(bubble.hobbies || []).filter((h) => (currentUser?.hobbies || []).includes(h)).join(', ') || 'curiosity'}.
               </span>
             </div>
           )}

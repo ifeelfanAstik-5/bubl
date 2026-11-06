@@ -86,22 +86,27 @@ export const BubbleBoard: React.FC<BubbleBoardProps> = ({
   const [activeHobbyFilter, setActiveHobbyFilter] = useState<string>('all');
   const [poppingBubbleId, setPoppingBubbleId] = useState<string | null>(null);
 
+  const safeHobbies = currentUser?.hobbies || [];
+  const safeLocation = (currentUser?.location || 'Local').split(',')[0];
+  const safeBurstsRemaining = currentUser?.dailyBurstsRemaining ?? 3;
+  const safeBurstIds = burstBubbleIdsToday || [];
+
   // Exactly 5 daily curated drifting bubbles
   const driftingBubbles = bubbles.filter((b) => !b.isUserBubble).slice(0, 5);
 
   const filteredBubbles = driftingBubbles.filter((b) => {
     if (activeHobbyFilter === 'all') return true;
     if (activeHobbyFilter === 'shared') {
-      return b.hobbies.some((h) => currentUser.hobbies.includes(h));
+      return b.hobbies.some((h) => safeHobbies.includes(h));
     }
     return b.hobbies.includes(activeHobbyFilter);
   });
 
-  const burstsUsedCount = 3 - currentUser.dailyBurstsRemaining;
-  const canBurstMore = currentUser.dailyBurstsRemaining > 0;
+  const burstsUsedCount = 3 - safeBurstsRemaining;
+  const canBurstMore = safeBurstsRemaining > 0;
 
   const handleCardClick = (bubble: BubblePost) => {
-    const isAlreadyBurst = burstBubbleIdsToday.includes(bubble.id);
+    const isAlreadyBurst = safeBurstIds.includes(bubble.id);
 
     // If already burst, open immediately without burst limit deduction
     if (isAlreadyBurst) {
@@ -116,7 +121,7 @@ export const BubbleBoard: React.FC<BubbleBoardProps> = ({
     // Check Resonance Bubble hobby match rule
     if (bubble.bubbleType === 'resonance') {
       const hasSharedHobby = bubble.hobbies.some((h) =>
-        currentUser.hobbies.includes(h)
+        safeHobbies.includes(h)
       );
       if (!hasSharedHobby) {
         alert(
@@ -164,7 +169,7 @@ export const BubbleBoard: React.FC<BubbleBoardProps> = ({
                 <div className="flex items-center gap-1.5 mt-1 text-[11px] text-stone-500 font-mono">
                   <span>🌬️</span>
                   <span>
-                    {currentUser.location.split(',')[0]} Sky: {weather.temperatureC}°C, {weather.conditionDescription} ({weather.windSpeedKmH} km/h wind)
+                    {safeLocation} Sky: {weather.temperatureC}°C, {weather.conditionDescription} ({weather.windSpeedKmH} km/h wind)
                   </span>
                 </div>
               )}
@@ -185,10 +190,10 @@ export const BubbleBoard: React.FC<BubbleBoardProps> = ({
             </div>
             <div className="leading-tight">
               <span className="text-[10px] text-stone-400 font-mono tracking-wider block">
-                BREATH LVL {currentUser.breathLevel}
+                BREATH LVL {currentUser?.breathLevel ?? 1}
               </span>
               <span className="font-semibold text-stone-800 font-mono">
-                {currentUser.dailyBreathEnergy}/100 Breath
+                {currentUser?.dailyBreathEnergy ?? 100}/100 Breath
               </span>
             </div>
           </div>
@@ -216,7 +221,7 @@ export const BubbleBoard: React.FC<BubbleBoardProps> = ({
 
             <div className="text-right">
               <div className="text-xs font-semibold text-stone-900 font-mono">
-                {currentUser.dailyBurstsRemaining} of 3 Bursts Left
+                {safeBurstsRemaining} of 3 Bursts Left
               </div>
               <span className="text-[10px] text-stone-400 block font-mono">
                 From 5 Daily Bubbles
@@ -248,10 +253,10 @@ export const BubbleBoard: React.FC<BubbleBoardProps> = ({
           }`}
         >
           <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-          <span>Shared Passions ({currentUser.hobbies.slice(0, 2).join(', ')})</span>
+          <span>Shared Passions ({safeHobbies.slice(0, 2).join(', ')})</span>
         </button>
 
-        {currentUser.hobbies.slice(0, 3).map((hobby) => (
+        {safeHobbies.slice(0, 3).map((hobby) => (
           <button
             key={hobby}
             onClick={() => setActiveHobbyFilter(hobby)}
@@ -405,25 +410,25 @@ export const BubbleBoard: React.FC<BubbleBoardProps> = ({
               {/* Lower Orb Details: Passions & Distance */}
               <div className="relative z-10 pt-3 border-t border-stone-200/50 flex items-center justify-between text-[11px] text-stone-500 font-mono">
                 <div className="flex items-center gap-1 truncate max-w-[65%]">
-                  {bubble.hobbies.slice(0, 2).map((h, i) => (
+                  {(bubble.hobbies || []).slice(0, 2).map((h, i) => (
                     <React.Fragment key={h}>
                       <span
                         className={
-                          currentUser.hobbies.includes(h)
+                          safeHobbies.includes(h)
                             ? 'text-stone-900 font-medium font-sans bg-white/80 px-1.5 py-0.5 rounded-md'
                             : 'text-stone-600 font-sans'
                         }
                       >
                         {h}
                       </span>
-                      {i < Math.min(bubble.hobbies.length, 2) - 1 && (
+                      {i < Math.min((bubble.hobbies || []).length, 2) - 1 && (
                         <span className="text-stone-300">·</span>
                       )}
                     </React.Fragment>
                   ))}
-                  {bubble.hobbies.length > 2 && (
+                  {(bubble.hobbies || []).length > 2 && (
                     <span className="text-stone-400">
-                      +{bubble.hobbies.length - 2}
+                      +{(bubble.hobbies || []).length - 2}
                     </span>
                   )}
                 </div>

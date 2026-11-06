@@ -43,8 +43,12 @@ export default function App() {
   const [isMobileDrawerOpen, setIsMobileDrawerOpen] = useState(false);
 
   // User Authentication & Global Data States (Strictly Real Data from Neon Postgres)
-  const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
-  const [isLoadingUser, setIsLoadingUser] = useState(true);
+  const [currentUser, setCurrentUser] = useState<UserProfile | null>(() => {
+    return apiClient.getCachedUser();
+  });
+  const [isLoadingUser, setIsLoadingUser] = useState<boolean>(() => {
+    return !apiClient.getCachedUser() && apiClient.hasToken();
+  });
   const [weather, setWeather] = useState<WeatherCondition | null>(null);
 
   const [friends, setFriends] = useState<Friend[]>([]);
@@ -72,20 +76,35 @@ export default function App() {
     apiClient.getWeather(user.latitude || 35.0116, user.longitude || 135.7681).then(setWeather);
   };
 
-  // Check authenticated session on startup
+  // Check authenticated session on startup with persistent token + cache
   useEffect(() => {
+    const cached = apiClient.getCachedUser();
+    if (cached) {
+      loadServerData(cached);
+    }
+
+    if (!apiClient.hasToken()) {
+      setIsLoadingUser(false);
+      setCurrentUser(null);
+      return;
+    }
+
     apiClient
       .getMe()
       .then((user) => {
         if (user && user.id) {
           setCurrentUser(user);
+          apiClient.saveCachedUser(user);
           loadServerData(user);
         } else {
           setCurrentUser(null);
+          apiClient.clearToken();
         }
       })
       .catch(() => {
-        setCurrentUser(null);
+        if (!cached) {
+          setCurrentUser(null);
+        }
       })
       .finally(() => {
         setIsLoadingUser(false);

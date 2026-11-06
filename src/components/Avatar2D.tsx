@@ -23,6 +23,7 @@ export const Avatar2D: React.FC<Avatar2DProps> = ({
   className = '',
   showBorder = true
 }) => {
+  const safeConfig = config || ({} as AvatarConfig);
   const {
     skinColor = '#F5D0C5',
     hairStyle = 'wavy',
@@ -33,7 +34,7 @@ export const Avatar2D: React.FC<Avatar2DProps> = ({
     clothingStyle = 'sweater',
     clothingColor = '#7A8B7B',
     bgTint = '#E8EFE9'
-  } = config;
+  } = safeConfig;
 
   return (
     <div

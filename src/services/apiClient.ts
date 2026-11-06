@@ -30,7 +30,28 @@ class ApiClient {
     this.token = null;
     if (typeof localStorage !== 'undefined') {
       localStorage.removeItem('bubl_auth_token');
+      localStorage.removeItem('bubl_user_profile');
     }
+  }
+
+  saveCachedUser(user: UserProfile) {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem('bubl_user_profile', JSON.stringify(user));
+    }
+  }
+
+  getCachedUser(): UserProfile | null {
+    if (typeof localStorage !== 'undefined') {
+      const saved = localStorage.getItem('bubl_user_profile');
+      if (saved) {
+        try {
+          return JSON.parse(saved);
+        } catch {
+          return null;
+        }
+      }
+    }
+    return null;
   }
 
   hasToken(): boolean {
@@ -70,21 +91,72 @@ class ApiClient {
   }
 
   // AUTHENTICATION & ONBOARDING
-  async login(email: string, password: string): Promise<{ success: boolean; data?: { token: string; user: UserProfile }; error?: string }> {
+  async login(identifier: string, password: string): Promise<{ success: boolean; data?: { token: string; user: UserProfile }; error?: string }> {
     try {
       const res = await fetch(`${API_BASE}/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ identifier, password }),
         credentials: 'include'
       });
       const json = await res.json();
       if (json.success && json.data?.token) {
         this.setToken(json.data.token);
+        if (json.data.user) {
+          this.saveCachedUser(json.data.user);
+        }
       }
       return json;
     } catch (e: any) {
       return { success: false, error: e.message || 'Connection error during login' };
+    }
+  }
+
+  async googleAuth(payload: { email: string; name?: string; googleId?: string; picture?: string }): Promise<{ success: boolean; data?: { token: string; user: UserProfile }; error?: string }> {
+    try {
+      const res = await fetch(`${API_BASE}/auth/google`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        credentials: 'include'
+      });
+      const json = await res.json();
+      if (json.success && json.data?.token) {
+        this.setToken(json.data.token);
+        if (json.data.user) {
+          this.saveCachedUser(json.data.user);
+        }
+      }
+      return json;
+    } catch (e: any) {
+      return { success: false, error: e.message || 'Google authentication error' };
+    }
+  }
+
+  async registerSimple(payload: {
+    nickname: string;
+    email: string;
+    password: string;
+    code: string;
+    dob?: string;
+  }): Promise<{ success: boolean; data?: { token: string; user: UserProfile }; error?: string }> {
+    try {
+      const res = await fetch(`${API_BASE}/auth/register-simple`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        credentials: 'include'
+      });
+      const json = await res.json();
+      if (json.success && json.data?.token) {
+        this.setToken(json.data.token);
+        if (json.data.user) {
+          this.saveCachedUser(json.data.user);
+        }
+      }
+      return json;
+    } catch (e: any) {
+      return { success: false, error: e.message || 'Registration error' };
     }
   }
 
@@ -112,6 +184,9 @@ class ApiClient {
       const json = await res.json();
       if (json.success && json.data?.token) {
         this.setToken(json.data.token);
+        if (json.data.user) {
+          this.saveCachedUser(json.data.user);
+        }
       }
       return json;
     } catch (e: any) {
@@ -152,6 +227,9 @@ class ApiClient {
       const json = await res.json();
       if (json.success && json.data?.token) {
         this.setToken(json.data.token);
+        if (json.data.user) {
+          this.saveCachedUser(json.data.user);
+        }
       }
       return json;
     } catch (e: any) {

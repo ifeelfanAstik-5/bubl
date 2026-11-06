@@ -342,7 +342,7 @@ export const FriendsSidebar: React.FC<FriendsSidebarProps> = ({
                       {friend.name}, {friend.age}
                     </h3>
                     <span className="text-[10px] font-mono text-stone-400 shrink-0">
-                      {friend.location.split(',')[0]}
+                      {(friend.location || 'Airspace').split(',')[0]}
                     </span>
                   </div>
 
@@ -360,7 +360,7 @@ export const FriendsSidebar: React.FC<FriendsSidebarProps> = ({
 
                   {/* Shared Hobbies Tags with Icons */}
                   <div className="mt-1.5 flex flex-wrap gap-1 items-center">
-                    {friend.hobbies.slice(0, 3).map((h) => (
+                    {(friend.hobbies || []).slice(0, 3).map((h) => (
                       <span
                         key={h}
                         className="inline-flex items-center gap-1 text-[9px] font-mono bg-stone-100 text-stone-600 px-1.5 py-0.5 rounded-md border border-stone-200/60"

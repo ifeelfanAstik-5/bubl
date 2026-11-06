@@ -2,8 +2,8 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import { zValidator } from '@hono/zod-validator';
 import { db, checkDatabaseConnection } from '../db';
-import { users, userHobbies, userUnlockedTypes, authOtps, bubbles, bubbleHobbies } from '../db/schema';
-import { eq, and, gt } from 'drizzle-orm';
+import { users, userHobbies, userUnlockedTypes, authOtps, bubbles, bubbleHobbies, NEUTRAL_AVATAR } from '../db/schema';
+import { eq, and, gt, sql, or } from 'drizzle-orm';
 import { hashPassword, verifyPassword } from '../services/authService';
 import { sendOtpEmail } from '../services/emailService';
 import { UserProfile, BubbleType } from '../../shared/types';
@@ -103,34 +103,46 @@ authRoutes.get('/services', async (c) => {
   });
 });
 
-// 1. Password Login
+// 1. Password Login (Accepts Identifier = Username or Email)
 const LoginSchema = z.object({
-  email: z.string().email(),
-  password: z.string().min(1)
+  identifier: z.string().optional(),
+  email: z.string().optional(),
+  password: z.string().min(1, 'Password is required')
 });
 
 authRoutes.post('/login', zValidator('json', LoginSchema), async (c) => {
-  const { email, password } = c.req.valid('json');
+  const { identifier, email, password } = c.req.valid('json');
+  const targetId = (identifier || email || '').trim().toLowerCase();
   const isDbConnected = await checkDatabaseConnection();
 
   if (!isDbConnected) {
     return c.json({ success: false, error: 'Database service is currently unreachable.' }, 503);
   }
 
+  if (!targetId) {
+    return c.json({ success: false, error: 'Please enter your username or email address.' }, 400);
+  }
+
   try {
-    const userRecords = await db.select().from(users).where(eq(users.email, email.toLowerCase()));
+    const userRecords = await db
+      .select()
+      .from(users)
+      .where(
+        sql`lower(${users.email}) = ${targetId} OR lower(${users.nickname}) = ${targetId}`
+      );
+
     if (userRecords.length === 0) {
-      return c.json({ success: false, error: 'No account found with this email. Please begin your journey first.' }, 404);
+      return c.json({ success: false, error: 'No account found with this ID (Username or Email). Please create an account.' }, 404);
     }
 
     const u = userRecords[0];
     if (!u.passwordHash) {
-      return c.json({ success: false, error: 'Password not set for this account. Please sign in via email code.' }, 400);
+      return c.json({ success: false, error: 'Password not set for this account. Please sign in via verification code.' }, 400);
     }
 
     const passwordValid = verifyPassword(password, u.passwordHash);
     if (!passwordValid) {
-      return c.json({ success: false, error: 'Invalid password. Please try again or request an email code.' }, 401);
+      return c.json({ success: false, error: 'Incorrect password. Please try again or sign in with email code.' }, 401);
     }
 
     // Generate Session
@@ -153,6 +165,201 @@ authRoutes.post('/login', zValidator('json', LoginSchema), async (c) => {
   } catch (error) {
     console.error('Login error:', error);
     return c.json({ success: false, error: 'An unexpected error occurred during login.' }, 500);
+  }
+});
+
+// Google Instant Sign-In / Register
+const GoogleAuthSchema = z.object({
+  email: z.string().email(),
+  name: z.string().optional(),
+  googleId: z.string().optional(),
+  picture: z.string().optional()
+});
+
+authRoutes.post('/google', zValidator('json', GoogleAuthSchema), async (c) => {
+  const { email, name } = c.req.valid('json');
+  const normalizedEmail = email.toLowerCase().trim();
+  const isDbConnected = await checkDatabaseConnection();
+
+  if (!isDbConnected) {
+    return c.json({ success: false, error: 'Database service is currently unreachable.' }, 503);
+  }
+
+  try {
+    const existingUsers = await db.select().from(users).where(eq(users.email, normalizedEmail));
+    let userId: string;
+
+    if (existingUsers.length > 0) {
+      userId = existingUsers[0].id;
+    } else {
+      // Auto-register new Google user with standard clean defaults
+      userId = `user_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+      const todayStr = new Date().toISOString().split('T')[0];
+      const nickname = (name || normalizedEmail.split('@')[0]).trim().slice(0, 30);
+
+      await db.insert(users).values({
+        id: userId,
+        email: normalizedEmail,
+        nickname: nickname || 'Traveler',
+        age: 24,
+        pronouns: 'they/them',
+        location: 'Local Airspace',
+        bio: '',
+        languages: ['English'],
+        exchangeInterest: 'Quiet Conversations',
+        avatar: NEUTRAL_AVATAR,
+        breathLevel: 1,
+        breathExp: 0,
+        dailyBreathEnergy: 100,
+        mixtureVialMl: 100,
+        lastDewRefillDate: todayStr,
+        dailyBurstsRemaining: 3,
+        dailyBurstsResetDate: todayStr,
+        moderationWarningsCount: 0,
+        suspendedUntil: null
+      });
+
+      await db.insert(userUnlockedTypes).values([
+        { id: `ut_${userId}_thought`, userId, bubbleType: 'thought' },
+        { id: `ut_${userId}_echo`, userId, bubbleType: 'echo' }
+      ]);
+    }
+
+    const token = `token_${Date.now()}_${Math.random().toString(36).substring(2, 12)}`;
+    activeSessions.set(token, userId);
+
+    c.header(
+      'Set-Cookie',
+      `bubl_session=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000`
+    );
+
+    const userRecords = await db.select().from(users).where(eq(users.id, userId));
+    const profile = await buildUserProfile(userRecords[0]);
+
+    return c.json({
+      success: true,
+      data: {
+        token,
+        user: profile
+      }
+    });
+  } catch (error) {
+    console.error('Google auth error:', error);
+    return c.json({ success: false, error: 'Google authentication failed.' }, 500);
+  }
+});
+
+// Simple Direct Registration (Username + Email + Password + OTP code)
+const SimpleRegisterSchema = z.object({
+  nickname: z.string().min(2, 'Username must be at least 2 characters').max(30),
+  email: z.string().email('Please provide a valid email address'),
+  password: z.string().min(6, 'Password must be at least 6 characters'),
+  code: z.string().min(4).max(8),
+  dob: z.string().optional()
+});
+
+authRoutes.post('/register-simple', zValidator('json', SimpleRegisterSchema), async (c) => {
+  const { nickname, email, password, code, dob } = c.req.valid('json');
+  const normalizedEmail = email.toLowerCase().trim();
+  const trimmedNickname = nickname.trim();
+  const isDbConnected = await checkDatabaseConnection();
+
+  if (!isDbConnected) {
+    return c.json({ success: false, error: 'Database service is currently unreachable.' }, 503);
+  }
+
+  try {
+    // 1. Verify OTP code
+    const otpRecords = await db
+      .select()
+      .from(authOtps)
+      .where(
+        and(
+          eq(authOtps.email, normalizedEmail),
+          eq(authOtps.code, code.trim()),
+          gt(authOtps.expiresAt, new Date())
+        )
+      );
+
+    if (otpRecords.length === 0) {
+      return c.json({ success: false, error: 'Invalid or expired verification code. Please check your email.' }, 400);
+    }
+
+    // 2. Check if email or username is already taken
+    const existingEmail = await db.select().from(users).where(eq(users.email, normalizedEmail));
+    if (existingEmail.length > 0) {
+      return c.json({ success: false, error: 'An account with this email already exists. Please sign in.' }, 409);
+    }
+
+    const existingNickname = await db
+      .select()
+      .from(users)
+      .where(sql`lower(${users.nickname}) = ${trimmedNickname.toLowerCase()}`);
+    if (existingNickname.length > 0) {
+      return c.json({ success: false, error: 'This username is already taken. Please choose another.' }, 409);
+    }
+
+    // 3. Mark OTP as used
+    await db.update(authOtps).set({ usedAt: new Date() }).where(eq(authOtps.id, otpRecords[0].id));
+
+    // 4. Hash password
+    const passwordHash = hashPassword(password);
+    const userId = `user_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const todayStr = new Date().toISOString().split('T')[0];
+
+    // Standard initial defaults: Level 1 breath, 0 XP, 100ml vial, standard clean profile
+    await db.insert(users).values({
+      id: userId,
+      email: normalizedEmail,
+      passwordHash,
+      nickname: trimmedNickname,
+      dob: dob || null,
+      age: 24,
+      pronouns: 'they/them',
+      location: 'Local Airspace',
+      bio: '',
+      languages: ['English'],
+      exchangeInterest: 'Quiet Conversations',
+      avatar: NEUTRAL_AVATAR,
+      breathLevel: 1,
+      breathExp: 0,
+      dailyBreathEnergy: 100,
+      mixtureVialMl: 100,
+      lastDewRefillDate: todayStr,
+      dailyBurstsRemaining: 3,
+      dailyBurstsResetDate: todayStr,
+      moderationWarningsCount: 0,
+      suspendedUntil: null
+    });
+
+    // Default unlocked bubble types
+    await db.insert(userUnlockedTypes).values([
+      { id: `ut_${userId}_thought`, userId, bubbleType: 'thought' },
+      { id: `ut_${userId}_echo`, userId, bubbleType: 'echo' }
+    ]);
+
+    // Establish persistent session
+    const token = `token_${Date.now()}_${Math.random().toString(36).substring(2, 12)}`;
+    activeSessions.set(token, userId);
+
+    c.header(
+      'Set-Cookie',
+      `bubl_session=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000`
+    );
+
+    const userRecords = await db.select().from(users).where(eq(users.id, userId));
+    const profile = await buildUserProfile(userRecords[0]);
+
+    return c.json({
+      success: true,
+      data: {
+        token,
+        user: profile
+      }
+    });
+  } catch (error) {
+    console.error('Simple registration error:', error);
+    return c.json({ success: false, error: 'Registration failed. Please try again.' }, 500);
   }
 });
 
