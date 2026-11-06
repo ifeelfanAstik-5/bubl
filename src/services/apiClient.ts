@@ -70,48 +70,93 @@ class ApiClient {
   }
 
   // AUTHENTICATION & ONBOARDING
-  async requestOtp(email: string): Promise<{ success: boolean; devCode?: string; message: string }> {
-    const res = await fetch(`${API_BASE}/auth/otp/request`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email })
-    });
-    return res.json();
+  async login(email: string, password: string): Promise<{ success: boolean; data?: { token: string; user: UserProfile }; error?: string }> {
+    try {
+      const res = await fetch(`${API_BASE}/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+        credentials: 'include'
+      });
+      const json = await res.json();
+      if (json.success && json.data?.token) {
+        this.setToken(json.data.token);
+      }
+      return json;
+    } catch (e: any) {
+      return { success: false, error: e.message || 'Connection error during login' };
+    }
   }
 
-  async verifyOtp(email: string, code: string): Promise<{ token: string; user: UserProfile } | null> {
-    const res = await this.request<{ token: string; user: UserProfile }>('/auth/otp/verify', {
-      method: 'POST',
-      body: JSON.stringify({ email, code })
-    });
-    if (res?.token) {
-      this.setToken(res.token);
+  async requestOtp(email: string, purpose: 'login' | 'signup' = 'signup'): Promise<{ success: boolean; testCode?: string; message: string; error?: string }> {
+    try {
+      const res = await fetch(`${API_BASE}/auth/otp/request`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, purpose })
+      });
+      return await res.json();
+    } catch (e: any) {
+      return { success: false, message: 'Failed to request code', error: e.message };
     }
-    return res;
+  }
+
+  async verifyLoginOtp(email: string, code: string): Promise<{ success: boolean; data?: { token: string; user: UserProfile }; error?: string }> {
+    try {
+      const res = await fetch(`${API_BASE}/auth/otp/verify-login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, code }),
+        credentials: 'include'
+      });
+      const json = await res.json();
+      if (json.success && json.data?.token) {
+        this.setToken(json.data.token);
+      }
+      return json;
+    } catch (e: any) {
+      return { success: false, error: e.message || 'Verification error' };
+    }
   }
 
   async onboard(payload: {
     email: string;
     code: string;
+    password: string;
     nickname: string;
+    dob: string;
     age: number;
     pronouns: string;
     location: string;
     latitude?: number;
     longitude?: number;
     bio: string;
+    languages: string[];
     exchangeInterest: string;
     hobbies: string[];
     avatar: AvatarConfig;
-  }): Promise<{ token: string; user: UserProfile } | null> {
-    const res = await this.request<{ token: string; user: UserProfile }>('/auth/onboard', {
-      method: 'POST',
-      body: JSON.stringify(payload)
-    });
-    if (res?.token) {
-      this.setToken(res.token);
+    firstBubble?: {
+      title: string;
+      content: string;
+      bubbleType: string;
+      bubbleColor: string;
+    };
+  }): Promise<{ success: boolean; data?: { token: string; user: UserProfile; debutBubbleId?: string }; error?: string }> {
+    try {
+      const res = await fetch(`${API_BASE}/auth/onboard`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        credentials: 'include'
+      });
+      const json = await res.json();
+      if (json.success && json.data?.token) {
+        this.setToken(json.data.token);
+      }
+      return json;
+    } catch (e: any) {
+      return { success: false, error: e.message || 'Registration error' };
     }
-    return res;
   }
 
   async logout(): Promise<boolean> {

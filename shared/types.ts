@@ -33,6 +33,7 @@ export interface UserProfile {
   id: string;
   email?: string;
   nickname: string;
+  dob?: string;
   age: number;
   pronouns: string;
   location: string;

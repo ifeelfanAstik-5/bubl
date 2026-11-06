@@ -2,29 +2,34 @@ import { pgTable, text, integer, bigint, boolean, timestamp, jsonb, real } from 
 import { relations } from 'drizzle-orm';
 import { AvatarConfig, MediaAttachment } from '../../shared/types';
 
+export const NEUTRAL_AVATAR: AvatarConfig = {
+  skinColor: '#F5D0C5',
+  hairStyle: 'classic',
+  hairColor: '#4A3E3D',
+  eyeStyle: 'calm',
+  mouthStyle: 'calm',
+  glassesStyle: 'none',
+  clothingStyle: 'sweater',
+  clothingColor: '#6B7280',
+  bgTint: '#F3EFEA'
+};
+
 // USERS TABLE
 export const users = pgTable('users', {
   id: text('id').primaryKey(),
   email: text('email').unique(),
-  nickname: text('nickname').notNull().default('Penpal'),
-  age: integer('age').notNull().default(24),
+  passwordHash: text('password_hash'),
+  nickname: text('nickname').notNull().default(''),
+  dob: text('dob'),
+  age: integer('age').notNull().default(18),
   pronouns: text('pronouns').notNull().default('they/them'),
-  location: text('location').notNull().default('Earth'),
+  location: text('location').notNull().default(''),
   latitude: real('latitude'),
   longitude: real('longitude'),
   bio: text('bio').notNull().default(''),
-  exchangeInterest: text('exchange_interest').notNull().default('Literature & Philosophy Discussions'),
-  avatar: jsonb('avatar').$type<AvatarConfig>().notNull().default({
-    skinColor: '#F5D0C5',
-    hairStyle: 'wavy',
-    hairColor: '#3A2E2B',
-    eyeStyle: 'calm',
-    mouthStyle: 'subtle_smile',
-    glassesStyle: 'round',
-    clothingStyle: 'sweater',
-    clothingColor: '#7A8B7B',
-    bgTint: '#E8EFE9'
-  }),
+  languages: jsonb('languages').$type<string[]>().notNull().default(['English']),
+  exchangeInterest: text('exchange_interest').notNull().default(''),
+  avatar: jsonb('avatar').$type<AvatarConfig>().notNull().default(NEUTRAL_AVATAR),
   // Breath & Soap Mixture Vial system
   breathLevel: integer('breath_level').notNull().default(1),
   breathExp: integer('breath_exp').notNull().default(0),
@@ -32,7 +37,7 @@ export const users = pgTable('users', {
   mixtureVialMl: integer('mixture_vial_ml').notNull().default(100),
   lastDewRefillDate: text('last_dew_refill_date'),
   dailyBurstsRemaining: integer('daily_bursts_remaining').notNull().default(3),
-  dailyBurstsResetDate: text('daily_bursts_reset_date').notNull().default('2026-11-01'),
+  dailyBurstsResetDate: text('daily_bursts_reset_date').notNull().default(''),
   lastBubblePublishedAt: bigint('last_bubble_published_at', { mode: 'number' }),
   moderationWarningsCount: integer('moderation_warnings_count').notNull().default(0),
   suspendedUntil: bigint('suspended_until', { mode: 'number' }),

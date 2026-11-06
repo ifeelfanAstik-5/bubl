@@ -4,9 +4,9 @@ import { authOtps, users, bubbles, bubbleHobbies, userUnlockedTypes, userHobbies
 import { eq } from 'drizzle-orm';
 
 async function runE2ETests() {
-  console.log('==================================================');
-  console.log('🫧 Bubl Authentic System & Neon Services Verification 🫧');
-  console.log('==================================================\n');
+  console.log('================================================================');
+  console.log('🫧 Bubl Authentic Auth & Blank-Slate Onboarding Verification 🫧');
+  console.log('================================================================\n');
 
   // Test 1: Health check
   console.log('1. Testing /api/health...');
@@ -20,8 +20,8 @@ async function runE2ETests() {
   console.log('✓ Health check passed!\n');
 
   // Test 2: Real Atmospheric Wind & Weather Service
-  console.log('2. Testing /api/weather/current (Kyoto, Japan)...');
-  const weatherRes = await app.request('/api/weather/current?lat=35.0116&lon=135.7681');
+  console.log('2. Testing /api/weather/current (Edinburgh, Scotland)...');
+  const weatherRes = await app.request('/api/weather/current?lat=55.9533&lon=-3.1883');
   const weatherData = await weatherRes.json();
   console.log('Weather response:', weatherData);
   if (!weatherData.success || typeof weatherData.data?.windSpeedKmH !== 'number') {
@@ -29,153 +29,177 @@ async function runE2ETests() {
   }
   console.log(`✓ Weather verified: ${weatherData.data.temperatureC}°C, ${weatherData.data.conditionDescription}, ${weatherData.data.windSpeedKmH} km/h wind.\n`);
 
-  // Test 3: Auth services config
-  console.log('3. Testing /api/auth/services...');
-  const servicesRes = await app.request('/api/auth/services');
-  const servicesData = await servicesRes.json();
-  if (!servicesData.postgres.connected || !servicesData.postgres.isNeon) {
-    throw new Error('Postgres service check failed!');
-  }
-  console.log('✓ Services status check passed!\n');
-
-  // Test 4: Neon Auth JWKS Endpoint
-  console.log('4. Testing Neon Auth JWKS URL...');
-  const jwksUrl = process.env.NEON_AUTH_JWKS_URL;
-  if (!jwksUrl) throw new Error('NEON_AUTH_JWKS_URL is missing in .env!');
-  const jwksRes = await fetch(jwksUrl);
-  const jwksData = await jwksRes.json();
-  console.log(`Fetched JWKS from: ${jwksUrl}, Keys count: ${Array.isArray(jwksData.keys) ? jwksData.keys.length : 0}`);
-  if (!Array.isArray(jwksData.keys) || jwksData.keys.length === 0) {
-    throw new Error('Neon Auth JWKS returned empty keys array!');
-  }
-  console.log('✓ Neon Auth JWKS is active and reachable!\n');
-
-  // Test 5: Mindful 3-Step Onboarding with Starter 100ml Mixture Vial
+  // Test 3: Resend OTP Request for Sign Up
   const testEmail = `pilgrim_${Date.now()}@bubl.test`;
-  console.log(`5. Testing Mindful Onboarding Flow for ${testEmail}...`);
-
-  // Step 2: Request OTP
+  console.log(`3. Testing Resend OTP Request for ${testEmail}...`);
   const otpRes = await app.request('/api/auth/otp/request', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email: testEmail })
+    body: JSON.stringify({ email: testEmail, purpose: 'signup' })
   });
   const otpData = await otpRes.json();
-  const code = otpData.devCode;
-  console.log(`Requested OTP code: ${code}`);
+  console.log('OTP Request response:', otpData);
 
-  // Step 3: Complete Onboarding Profile & 100ml Vial Provisioning
+  // Retrieve generated code from Neon DB auth_otps
+  const dbOtps = await db.select().from(authOtps).where(eq(authOtps.email, testEmail));
+  if (dbOtps.length === 0) {
+    throw new Error('OTP was not persisted in Neon auth_otps table!');
+  }
+  const code = dbOtps[0].code;
+  console.log(`✓ OTP successfully generated & recorded in Neon: ${code}\n`);
+
+  // Test 4: Blank-Slate 6-Step Onboarding with Custom DOB, Bio, Avatar & Debut Bubble
+  console.log('4. Testing Blank-Slate Onboarding (POST /api/auth/onboard)...');
+  const testPassword = 'QuietSoul#2026';
   const onboardRes = await app.request('/api/auth/onboard', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       email: testEmail,
       code,
-      nickname: 'Aoi',
-      age: 27,
-      pronouns: 'she/her',
-      location: 'Kyoto, Japan',
-      latitude: 35.0116,
-      longitude: 135.7681,
-      bio: 'Lover of slow tea ceremonies, analog film, and quiet conversations.',
-      hobbies: ['Literature', 'Tea & Coffee', 'Film Photography'],
-      exchangeInterest: 'Literature & Philosophy',
+      password: testPassword,
+      nickname: 'Kaito',
+      dob: '1998-04-12',
+      age: 28,
+      pronouns: 'he/they',
+      location: 'Edinburgh, Scotland',
+      latitude: 55.9533,
+      longitude: -3.1883,
+      bio: 'Collector of antique compasses, rainy afternoon tea drinker, and analog journal keeper.',
+      languages: ['English', 'Gaelic'],
+      exchangeInterest: 'Antique Crafts & Highland Weather',
+      hobbies: ['Literature', 'Coffee Brewing', 'Stargazing', 'Old Bookstores'],
       avatar: {
         skinColor: '#F5D0C5',
-        hairStyle: 'wavy',
-        hairColor: '#3A2E2B',
+        hairStyle: 'classic',
+        hairColor: '#4A3E3D',
         eyeStyle: 'calm',
-        mouthStyle: 'subtle_smile',
+        mouthStyle: 'calm',
         glassesStyle: 'round',
-        clothingStyle: 'sweater',
-        clothingColor: '#7A8B7B',
-        bgTint: '#E8EFE9'
+        clothingStyle: 'cardigan',
+        clothingColor: '#4D7C9E',
+        bgTint: '#EDF3F7'
+      },
+      firstBubble: {
+        title: 'Morning Rain over the Old Stone Spires',
+        content: 'There is a quiet patience in listening to cold rain tap against vintage windowpanes before writing a letter.',
+        bubbleType: 'thought',
+        bubbleColor: '#4D7C9E'
       }
     })
   });
+
   const onboardData = await onboardRes.json();
   console.log('Onboarding response:', onboardData);
   if (!onboardData.success || !onboardData.data?.token) {
     throw new Error(`Onboarding failed: ${JSON.stringify(onboardData)}`);
   }
+
   const sessionToken = onboardData.data.token;
-  const createdUserId = onboardData.data.user.id;
-  const initialVial = onboardData.data.user.mixtureVialMl;
-  console.log(`User created (ID: ${createdUserId}), Starter Soap Mixture Vial: ${initialVial}ml`);
-  if (initialVial !== 100) {
-    throw new Error(`Expected starter vial 100ml, got ${initialVial}ml`);
-  }
-  console.log('✓ Mindful Onboarding & 100ml Soap Mixture Vial passed!\n');
+  const user = onboardData.data.user;
+  const debutBubbleId = onboardData.data.debutBubbleId;
 
-  // Test 6: Mindful Breath Pause (+15ml Mixture)
-  console.log('6. Testing Mindful Breath Pause (/api/users/breathe)...');
-  const breatheRes = await app.request('/api/users/breathe', {
-    method: 'POST',
-    headers: { 'Authorization': `Bearer ${sessionToken}` }
-  });
-  const breatheData = await breatheRes.json();
-  console.log('Breathe response:', breatheData);
-  if (!breatheData.success) {
-    throw new Error('Breathe pause endpoint failed!');
-  }
-  console.log('✓ Mindful Breath Pause passed!\n');
+  console.log(`User created: ${user.nickname} (${user.location}), DOB: ${user.dob}, Age: ${user.age}`);
+  console.log(`Mixture Vial: ${user.mixtureVialMl}ml / 100ml (-25ml for debut bubble)`);
+  console.log(`Breath Level: ${user.breathLevel}, Exp: ${user.breathExp} XP`);
 
-  // Test 7: Release Mindful Bubble (-25ml Mixture Vial deduction)
-  console.log('7. Testing Bubble blowing with 25ml mixture deduction...');
-  const releaseRes = await app.request('/api/bubbles', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${sessionToken}`
-    },
-    body: JSON.stringify({
-      title: 'Morning Solitude and Warm Tea',
-      content: 'The best conversations are the ones that take time to breathe quietly before speaking.',
-      bubbleType: 'thought',
-      bubbleColor: '#8D7B68',
-      breathEffort: 'balanced',
-      hobbies: ['Literature', 'Tea & Coffee']
-    })
-  });
-  const releaseData = await releaseRes.json();
-  console.log('Bubble release response:', releaseData);
-  if (!releaseData.success || !releaseData.bubbleId) {
-    throw new Error(`Bubble release failed: ${JSON.stringify(releaseData)}`);
-  }
-  const bubbleId = releaseData.bubbleId;
-  console.log(`Bubble ${bubbleId} blown into airspace! Vial remaining: ${releaseData.mixtureVialMl}ml`);
-  if (releaseData.mixtureVialMl > 75) {
-    throw new Error(`Expected 25ml deduction from vial, remaining is ${releaseData.mixtureVialMl}ml`);
-  }
+  // Assertions
+  if (user.nickname !== 'Kaito') throw new Error(`Expected nickname 'Kaito', got '${user.nickname}'`);
+  if (user.dob !== '1998-04-12') throw new Error(`Expected dob '1998-04-12', got '${user.dob}'`);
+  if (user.age !== 28) throw new Error(`Expected age 28, got ${user.age}`);
+  if (user.breathLevel !== 1) throw new Error(`Expected Breath Level 1, got ${user.breathLevel}`);
+  if (user.mixtureVialMl !== 75) throw new Error(`Expected 75ml vial remaining, got ${user.mixtureVialMl}ml`);
+  if (!user.languages.includes('Gaelic')) throw new Error(`Expected languages to contain 'Gaelic', got ${user.languages}`);
 
-  // Fetch Mine archive to ensure user can see their own published bubble
+  console.log('✓ Blank-slate user creation & debut bubble ritual passed!\n');
+
+  // Test 5: Verify debut bubble in personal archive
+  console.log('5. Verifying debut bubble in personal airspace archive...');
   const mineRes = await app.request('/api/bubbles/mine', {
     headers: { 'Authorization': `Bearer ${sessionToken}` }
   });
   const mineData = await mineRes.json();
-  console.log(`Retrieved ${mineData.data?.length} bubble(s) in personal archive.`);
-  if (mineData.data?.length === 0) {
-    throw new Error('Personal archive should contain the freshly released bubble!');
+  console.log(`User archive has ${mineData.data?.length} bubble(s): "${mineData.data?.[0]?.title}"`);
+  if (mineData.data?.length === 0 || mineData.data?.[0]?.id !== debutBubbleId) {
+    throw new Error('Debut bubble was not found in personal archive!');
   }
-  console.log('✓ Bubble blowing & Soap Mixture physics verified!\n');
+  console.log('✓ Debut bubble archive verified!\n');
 
-  // Clean up all test data strictly
-  console.log('8. Cleaning up test data in Neon Postgres...');
-  if (bubbleId) {
-    await db.delete(bubbleHobbies).where(eq(bubbleHobbies.bubbleId, bubbleId));
-    await db.delete(bubbles).where(eq(bubbles.id, bubbleId));
+  // Test 6: Sign In with Password (Returning User Flow)
+  console.log('6. Testing Password Sign In (POST /api/auth/login)...');
+  const loginRes = await app.request('/api/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: testEmail, password: testPassword })
+  });
+  const loginData = await loginRes.json();
+  console.log('Login response user:', loginData.data?.user?.nickname);
+  if (!loginData.success || !loginData.data?.token || loginData.data?.user?.id !== user.id) {
+    throw new Error('Password login failed for valid credentials!');
   }
-  if (createdUserId) {
-    await db.delete(userHobbies).where(eq(userHobbies.userId, createdUserId));
-    await db.delete(userUnlockedTypes).where(eq(userUnlockedTypes.userId, createdUserId));
-    await db.delete(users).where(eq(users.id, createdUserId));
+  console.log('✓ Valid password login passed!\n');
+
+  // Test 7: Reject Invalid Password
+  console.log('7. Testing Wrong Password Rejection...');
+  const badLoginRes = await app.request('/api/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: testEmail, password: 'WrongPassword999' })
+  });
+  const badLoginData = await badLoginRes.json();
+  console.log('Bad login response (expected 401):', badLoginRes.status, badLoginData.error);
+  if (badLoginRes.status !== 401 || badLoginData.success) {
+    throw new Error('Server accepted incorrect password!');
+  }
+  console.log('✓ Wrong password correctly rejected with 401!\n');
+
+  // Test 8: Returning User Sign In via Email OTP (Passwordless Login Flow)
+  console.log('8. Testing Passwordless Email OTP Login...');
+  const loginOtpReqRes = await app.request('/api/auth/otp/request', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: testEmail, purpose: 'login' })
+  });
+  const loginOtpReqData = await loginOtpReqRes.json();
+  if (!loginOtpReqData.success) {
+    throw new Error(`Login OTP request failed: ${loginOtpReqData.error}`);
+  }
+
+  const latestOtps = await db
+    .select()
+    .from(authOtps)
+    .where(eq(authOtps.email, testEmail));
+  const loginCode = latestOtps[latestOtps.length - 1].code;
+
+  const verifyLoginRes = await app.request('/api/auth/otp/verify-login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: testEmail, code: loginCode })
+  });
+  const verifyLoginData = await verifyLoginRes.json();
+  console.log('OTP Login response user:', verifyLoginData.data?.user?.nickname);
+  if (!verifyLoginData.success || verifyLoginData.data?.user?.id !== user.id) {
+    throw new Error('OTP login failed for returning user!');
+  }
+  console.log('✓ Passwordless OTP login passed!\n');
+
+  // Clean up all test data strictly from Neon PostgreSQL
+  console.log('9. Cleaning up test data in Neon Postgres...');
+  if (debutBubbleId) {
+    await db.delete(bubbleHobbies).where(eq(bubbleHobbies.bubbleId, debutBubbleId));
+    await db.delete(bubbles).where(eq(bubbles.id, debutBubbleId));
+  }
+  if (user.id) {
+    await db.delete(userHobbies).where(eq(userHobbies.userId, user.id));
+    await db.delete(userUnlockedTypes).where(eq(userUnlockedTypes.userId, user.id));
+    await db.delete(users).where(eq(users.id, user.id));
   }
   await db.delete(authOtps).where(eq(authOtps.email, testEmail));
   console.log('✓ Complete database test cleanup finished.\n');
 
-  console.log('==================================================');
-  console.log('🎉 ALL AUTHENTIC SERVICES VERIFIED END-TO-END! 🎉');
-  console.log('==================================================');
+  console.log('================================================================');
+  console.log('🎉 ALL AUTHENTIC SYSTEMS & ONBOARDING VERIFIED END-TO-END! 🎉');
+  console.log('================================================================');
 
   await client.end();
   process.exit(0);

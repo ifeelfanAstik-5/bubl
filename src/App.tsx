@@ -21,7 +21,7 @@ import { BurstBubbleModal } from './components/BurstBubbleModal';
 import { AvatarEditorModal } from './components/AvatarEditorModal';
 import { ProfileModal } from './components/ProfileModal';
 import { ModerationWarningModal } from './components/ModerationWarningModal';
-import { OnboardingModal } from './components/OnboardingModal';
+import { AuthModal } from './components/auth/AuthModal';
 import { MixtureVialWidget } from './components/MixtureVialWidget';
 import {
   CircleDot,
@@ -632,13 +632,13 @@ export default function App() {
     );
   }
 
-  // 2. Full Auth Guard: Unauthenticated visitors see Mindful Onboarding Journey
+  // 2. Full Auth Guard: Unauthenticated visitors see Mindful Sign In & Onboarding Modal
   if (!currentUser) {
     return (
       <div className="min-h-screen bg-[#FAF7F2]">
-        <OnboardingModal
+        <AuthModal
           isOpen={true}
-          onComplete={(user) => {
+          onSuccess={(user) => {
             setCurrentUser(user);
             loadServerData(user);
           }}

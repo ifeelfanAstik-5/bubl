@@ -45,7 +45,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
   const [location, setLocation] = useState(user.location);
   const [bio, setBio] = useState(user.bio);
   const [exchangeInterest, setExchangeInterest] = useState(
-    user.exchangeInterest || 'Literature & Philosophy Discussions'
+    user.exchangeInterest || ''
   );
   const [selectedHobbies, setSelectedHobbies] = useState<string[]>(user.hobbies || []);
   const [unlockedTypes, setUnlockedTypes] = useState<BubbleType[]>(
@@ -85,12 +85,12 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
 
   const handleSave = () => {
     onSave({
-      nickname: nickname.trim() || 'Penpal',
-      age: Number(age) || 24,
-      pronouns: pronouns.trim() || 'they/them',
-      location: location.trim() || 'Earth',
+      nickname: nickname.trim() || user.nickname,
+      age: Number(age) || user.age,
+      pronouns: pronouns.trim() || user.pronouns,
+      location: location.trim() || user.location,
       bio: bio.trim(),
-      exchangeInterest,
+      exchangeInterest: exchangeInterest.trim(),
       hobbies: selectedHobbies,
       unlockedBubbleTypes: unlockedTypes
     });

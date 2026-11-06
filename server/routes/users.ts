@@ -59,13 +59,14 @@ userRoutes.get('/me', async (c) => {
       id: u.id,
       email: u.email || undefined,
       nickname: u.nickname,
+      dob: u.dob || undefined,
       age: u.age,
       pronouns: u.pronouns,
       location: u.location,
       latitude: u.latitude || undefined,
       longitude: u.longitude || undefined,
       bio: u.bio,
-      languages: ['English'],
+      languages: (u.languages as string[]) || ['English'],
       exchangeInterest: u.exchangeInterest,
       avatar: u.avatar,
       hobbies: hobbiesRecords.map((h) => h.hobby),
@@ -139,10 +140,12 @@ userRoutes.post('/breathe', async (c) => {
 // Update Profile Schema
 const UpdateProfileSchema = z.object({
   nickname: z.string().min(1).max(40).optional(),
-  age: z.number().min(18).max(100).optional(),
+  dob: z.string().optional(),
+  age: z.number().min(18).max(120).optional(),
   pronouns: z.string().max(30).optional(),
   location: z.string().max(60).optional(),
   bio: z.string().max(500).optional(),
+  languages: z.array(z.string()).optional(),
   exchangeInterest: z.string().optional(),
   hobbies: z.array(z.string()).max(8).optional(),
   unlockedBubbleTypes: z.array(z.string()).optional()
@@ -164,10 +167,12 @@ userRoutes.patch('/me', zValidator('json', UpdateProfileSchema), async (c) => {
   try {
     const updatePayload: Record<string, any> = { updatedAt: new Date() };
     if (data.nickname) updatePayload.nickname = data.nickname.trim();
+    if (data.dob) updatePayload.dob = data.dob.trim();
     if (data.age) updatePayload.age = data.age;
     if (data.pronouns) updatePayload.pronouns = data.pronouns.trim();
     if (data.location) updatePayload.location = data.location.trim();
     if (data.bio !== undefined) updatePayload.bio = data.bio.trim();
+    if (data.languages) updatePayload.languages = data.languages;
     if (data.exchangeInterest) updatePayload.exchangeInterest = data.exchangeInterest;
 
     await db.update(users).set(updatePayload).where(eq(users.id, userId));

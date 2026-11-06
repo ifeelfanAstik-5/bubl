@@ -2,15 +2,17 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import { zValidator } from '@hono/zod-validator';
 import { db, checkDatabaseConnection } from '../db';
-import { users, userHobbies, userUnlockedTypes, authOtps } from '../db/schema';
+import { users, userHobbies, userUnlockedTypes, authOtps, bubbles, bubbleHobbies } from '../db/schema';
 import { eq, and, gt } from 'drizzle-orm';
-import { INITIAL_USER } from '../../src/data/mockData';
+import { hashPassword, verifyPassword } from '../services/authService';
+import { sendOtpEmail } from '../services/emailService';
+import { UserProfile, BubbleType } from '../../shared/types';
 import { createRemoteJWKSet, jwtVerify } from 'jose';
 
 export const authRoutes = new Hono();
 
 // In-memory token session cache for fast stateless / mobile verification
-const activeSessions = new Map<string, string>(); // token -> userId
+export const activeSessions = new Map<string, string>(); // token -> userId
 
 // Neon Auth JWKS setup
 const jwksUrl = process.env.NEON_AUTH_JWKS_URL;
@@ -49,6 +51,40 @@ export function getUserIdFromRequest(c: any): string | null {
   return null;
 }
 
+export async function buildUserProfile(u: typeof users.$inferSelect): Promise<UserProfile> {
+  const hobbiesRecords = await db.select().from(userHobbies).where(eq(userHobbies.userId, u.id));
+  const typesRecords = await db.select().from(userUnlockedTypes).where(eq(userUnlockedTypes.userId, u.id));
+  return {
+    id: u.id,
+    email: u.email || undefined,
+    nickname: u.nickname,
+    dob: u.dob || undefined,
+    age: u.age,
+    pronouns: u.pronouns,
+    location: u.location,
+    latitude: u.latitude || undefined,
+    longitude: u.longitude || undefined,
+    bio: u.bio,
+    languages: (u.languages as string[]) || ['English'],
+    exchangeInterest: u.exchangeInterest,
+    avatar: u.avatar,
+    hobbies: hobbiesRecords.map((h) => h.hobby),
+    unlockedBubbleTypes: (typesRecords.map((t) => t.bubbleType) as BubbleType[]) || ['thought', 'echo'],
+    lastBubblePublishedAt: u.lastBubblePublishedAt,
+    dailyBurstsRemaining: u.dailyBurstsRemaining,
+    dailyBurstsResetDate: u.dailyBurstsResetDate,
+    burstBubbleIdsToday: [],
+    breathLevel: u.breathLevel,
+    breathExp: u.breathExp,
+    dailyBreathEnergy: u.dailyBreathEnergy,
+    mixtureVialMl: u.mixtureVialMl,
+    lastDewRefillDate: u.lastDewRefillDate || undefined,
+    moderationWarningsCount: u.moderationWarningsCount,
+    suspendedUntil: u.suspendedUntil,
+    moderationWarningsHistory: []
+  };
+}
+
 // Return Neon & Auth services configuration status
 authRoutes.get('/services', async (c) => {
   const isDbConnected = await checkDatabaseConnection();
@@ -67,408 +103,355 @@ authRoutes.get('/services', async (c) => {
   });
 });
 
-const RequestOtpSchema = z.object({
-  email: z.string().email()
+// 1. Password Login
+const LoginSchema = z.object({
+  email: z.string().email(),
+  password: z.string().min(1)
 });
 
-const VerifyOtpSchema = z.object({
+authRoutes.post('/login', zValidator('json', LoginSchema), async (c) => {
+  const { email, password } = c.req.valid('json');
+  const isDbConnected = await checkDatabaseConnection();
+
+  if (!isDbConnected) {
+    return c.json({ success: false, error: 'Database service is currently unreachable.' }, 503);
+  }
+
+  try {
+    const userRecords = await db.select().from(users).where(eq(users.email, email.toLowerCase()));
+    if (userRecords.length === 0) {
+      return c.json({ success: false, error: 'No account found with this email. Please begin your journey first.' }, 404);
+    }
+
+    const u = userRecords[0];
+    if (!u.passwordHash) {
+      return c.json({ success: false, error: 'Password not set for this account. Please sign in via email code.' }, 400);
+    }
+
+    const passwordValid = verifyPassword(password, u.passwordHash);
+    if (!passwordValid) {
+      return c.json({ success: false, error: 'Invalid password. Please try again or request an email code.' }, 401);
+    }
+
+    // Generate Session
+    const token = `token_${Date.now()}_${Math.random().toString(36).substring(2, 12)}`;
+    activeSessions.set(token, u.id);
+
+    c.header(
+      'Set-Cookie',
+      `bubl_session=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000`
+    );
+
+    const profile = await buildUserProfile(u);
+    return c.json({
+      success: true,
+      data: {
+        token,
+        user: profile
+      }
+    });
+  } catch (error) {
+    console.error('Login error:', error);
+    return c.json({ success: false, error: 'An unexpected error occurred during login.' }, 500);
+  }
+});
+
+// 2. Request OTP Code (for Login or Signup)
+const RequestOtpSchema = z.object({
+  email: z.string().email(),
+  purpose: z.enum(['login', 'signup']).default('signup')
+});
+
+authRoutes.post('/otp/request', zValidator('json', RequestOtpSchema), async (c) => {
+  const { email, purpose } = c.req.valid('json');
+  const normalizedEmail = email.toLowerCase().trim();
+  const isDbConnected = await checkDatabaseConnection();
+
+  if (!isDbConnected) {
+    return c.json({ success: false, error: 'Database is currently offline.' }, 503);
+  }
+
+  try {
+    const existingUsers = await db.select().from(users).where(eq(users.email, normalizedEmail));
+
+    if (purpose === 'login' && existingUsers.length === 0) {
+      return c.json({ success: false, error: 'No account found with this email. Please begin your journey to create one.' }, 404);
+    }
+
+    if (purpose === 'signup' && existingUsers.length > 0) {
+      return c.json({ success: false, error: 'An account with this email already exists. Please sign in.' }, 409);
+    }
+
+    // Generate 6-digit OTP
+    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 mins
+
+    await db.insert(authOtps).values({
+      id: `otp_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      email: normalizedEmail,
+      code,
+      expiresAt
+    });
+
+    // Send real email via Resend
+    const sendResult = await sendOtpEmail(normalizedEmail, code, purpose);
+    if (!sendResult.success) {
+      console.warn(`[Resend Notice] Could not deliver email to ${normalizedEmail}: ${sendResult.error}`);
+    }
+
+    return c.json({
+      success: true,
+      message: `A 6-digit verification code has been dispatched to ${normalizedEmail}.`,
+      // Expose code in development/test runner only for automated verification
+      ...(process.env.NODE_ENV === 'test' || process.env.NODE_ENV === 'development' ? { testCode: code } : {})
+    });
+  } catch (error) {
+    console.error('OTP request error:', error);
+    return c.json({ success: false, error: 'Failed to dispatch verification code.' }, 500);
+  }
+});
+
+// 3. Verify OTP for Returning User Login (Passwordless)
+const VerifyLoginOtpSchema = z.object({
   email: z.string().email(),
   code: z.string().min(4).max(8)
 });
 
-// Request Passwordless OTP
-authRoutes.post('/otp/request', zValidator('json', RequestOtpSchema), async (c) => {
-  const { email } = c.req.valid('json');
-  const code = Math.floor(100000 + Math.random() * 900000).toString();
-  const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 mins
-
-  console.log(`\n🫧 [Bubl Auth] OTP for ${email}: ${code} (Valid for 15 mins)\n`);
-
-  const isDbConnected = await checkDatabaseConnection();
-  if (isDbConnected) {
-    try {
-      await db.insert(authOtps).values({
-        id: `otp_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-        email,
-        code,
-        expiresAt
-      });
-    } catch (e) {
-      console.error('Error saving OTP to DB:', e);
-    }
-  }
-
-  return c.json({
-    success: true,
-    message: 'A 6-digit mindful verification code was generated.',
-    // In development mode, include code for zero-friction testing
-    devCode: code
-  });
-});
-
-// Verify Passwordless OTP & Sign In / Register
-authRoutes.post('/otp/verify', zValidator('json', VerifyOtpSchema), async (c) => {
+authRoutes.post('/otp/verify-login', zValidator('json', VerifyLoginOtpSchema), async (c) => {
   const { email, code } = c.req.valid('json');
+  const normalizedEmail = email.toLowerCase().trim();
   const isDbConnected = await checkDatabaseConnection();
 
-  let isValid = false;
+  if (!isDbConnected) {
+    return c.json({ success: false, error: 'Database is offline.' }, 503);
+  }
 
-  if (isDbConnected) {
-    try {
-      const records = await db
-        .select()
-        .from(authOtps)
-        .where(
-          and(
-            eq(authOtps.email, email),
-            eq(authOtps.code, code),
-            gt(authOtps.expiresAt, new Date())
-          )
-        );
-      if (records.length > 0) {
-        isValid = true;
+  try {
+    const otpRecords = await db
+      .select()
+      .from(authOtps)
+      .where(
+        and(
+          eq(authOtps.email, normalizedEmail),
+          eq(authOtps.code, code.trim()),
+          gt(authOtps.expiresAt, new Date())
+        )
+      );
+
+    if (otpRecords.length === 0) {
+      return c.json({ success: false, error: 'Invalid or expired verification code.' }, 400);
+    }
+
+    const userRecords = await db.select().from(users).where(eq(users.email, normalizedEmail));
+    if (userRecords.length === 0) {
+      return c.json({ success: false, error: 'User profile not found. Please complete registration.' }, 404);
+    }
+
+    // Mark OTP as used
+    await db.update(authOtps).set({ usedAt: new Date() }).where(eq(authOtps.id, otpRecords[0].id));
+
+    const u = userRecords[0];
+    const token = `token_${Date.now()}_${Math.random().toString(36).substring(2, 12)}`;
+    activeSessions.set(token, u.id);
+
+    c.header(
+      'Set-Cookie',
+      `bubl_session=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000`
+    );
+
+    const profile = await buildUserProfile(u);
+    return c.json({
+      success: true,
+      data: {
+        token,
+        user: profile
       }
-    } catch (e) {
-      console.error(e);
-    }
-  } else {
-    // If DB is offline, allow dev testing code or any 6-digit code
-    isValid = true;
+    });
+  } catch (error) {
+    console.error('Verify login error:', error);
+    return c.json({ success: false, error: 'Verification failed.' }, 500);
   }
-
-  if (!isValid && code !== '123456') {
-    return c.json({ success: false, error: 'Invalid or expired verification code.' }, 400);
-  }
-
-  // Issue session token
-  const token = `token_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`;
-  const userId = `user_${email.replace(/[^a-zA-Z0-9]/g, '_')}`;
-  activeSessions.set(token, userId);
-
-  // Find or create user
-  let userProfile = { ...INITIAL_USER, id: userId, email };
-
-  if (isDbConnected) {
-    try {
-      const existing = await db.select().from(users).where(eq(users.id, userId));
-      if (existing.length === 0) {
-        await db.insert(users).values({
-          id: userId,
-          email,
-          nickname: email.split('@')[0],
-          age: 24,
-          pronouns: 'they/them',
-          location: 'Earth',
-          bio: 'Mindful thinker and slow pen pal.',
-          exchangeInterest: 'Literature & Philosophy Discussions',
-          avatar: INITIAL_USER.avatar,
-          breathLevel: 1,
-          breathExp: 0,
-          dailyBreathEnergy: 100,
-          dailyBurstsRemaining: 3,
-          dailyBurstsResetDate: new Date().toISOString().split('T')[0]
-        });
-
-        // Insert default starter types
-        await db.insert(userUnlockedTypes).values([
-          { id: `ut_${userId}_thought`, userId, bubbleType: 'thought' },
-          { id: `ut_${userId}_echo`, userId, bubbleType: 'echo' }
-        ]);
-      }
-    } catch (e) {
-      console.error(e);
-    }
-  }
-
-  // Set HTTP-only session cookie for Web clients
-  c.header(
-    'Set-Cookie',
-    `bubl_session=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000`
-  );
-
-  return c.json({
-    success: true,
-    data: {
-      token, // Return token for Mobile / React Native clients
-      user: userProfile
-    }
-  });
 });
 
-// Complete 3-Step Mindful Onboarding Registration
+// 4. Complete 6-Step Mindful Onboarding Registration
 const OnboardSchema = z.object({
   email: z.string().email(),
   code: z.string().min(4).max(8),
-  nickname: z.string().min(2).max(30),
-  age: z.number().min(18).max(99),
+  password: z.string().min(6, 'Password must be at least 6 characters'),
+  nickname: z.string().min(2, 'Name must be at least 2 characters').max(40),
+  dob: z.string().min(1, 'Date of birth is required'),
+  age: z.number().min(18, 'Must be 18 years or older').max(120),
   pronouns: z.string().default('they/them'),
-  location: z.string().min(2),
+  location: z.string().min(2, 'Location is required'),
   latitude: z.number().optional(),
   longitude: z.number().optional(),
-  bio: z.string().max(300).default(''),
-  exchangeInterest: z.string().default('Literature & Philosophy Discussions'),
-  hobbies: z.array(z.string()).min(1).max(6),
-  avatar: z.any()
+  bio: z.string().max(500).default(''),
+  languages: z.array(z.string()).min(1).default(['English']),
+  exchangeInterest: z.string().max(200).default(''),
+  hobbies: z.array(z.string()).min(3, 'Select at least 3 hobbies').max(8),
+  avatar: z.any(),
+  firstBubble: z.object({
+    title: z.string().min(1).max(120),
+    content: z.string().min(1).max(2000),
+    bubbleType: z.string().default('thought'),
+    bubbleColor: z.string().default('#8D7B68')
+  }).optional()
 });
 
 authRoutes.post('/onboard', zValidator('json', OnboardSchema), async (c) => {
   const data = c.req.valid('json');
+  const normalizedEmail = data.email.toLowerCase().trim();
   const isDbConnected = await checkDatabaseConnection();
 
-  let isValid = false;
-  if (isDbConnected) {
-    try {
-      const records = await db
-        .select()
-        .from(authOtps)
-        .where(
-          and(
-            eq(authOtps.email, data.email),
-            eq(authOtps.code, data.code),
-            gt(authOtps.expiresAt, new Date())
-          )
-        );
-      if (records.length > 0) {
-        isValid = true;
-      }
-    } catch (e) {
-      console.error(e);
-    }
-  } else {
-    isValid = true;
-  }
-
-  if (!isValid && data.code !== '123456') {
-    return c.json({ success: false, error: 'Invalid or expired verification code.' }, 400);
-  }
-
-  const userId = `user_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-  const token = `token_${Date.now()}_${Math.random().toString(36).substring(2, 12)}`;
-  activeSessions.set(token, userId);
-
-  const todayStr = new Date().toISOString().split('T')[0];
-
-  if (isDbConnected) {
-    try {
-      // Upsert user
-      await db.insert(users).values({
-        id: userId,
-        email: data.email,
-        nickname: data.nickname,
-        age: data.age,
-        pronouns: data.pronouns,
-        location: data.location,
-        latitude: data.latitude ?? 35.0116,
-        longitude: data.longitude ?? 135.7681,
-        bio: data.bio,
-        exchangeInterest: data.exchangeInterest,
-        avatar: data.avatar,
-        mixtureVialMl: 100, // Full starter 100ml Mixture Vial
-        lastDewRefillDate: todayStr,
-        dailyBurstsRemaining: 3,
-        dailyBurstsResetDate: todayStr,
-        breathLevel: 1,
-        breathExp: 0,
-        dailyBreathEnergy: 100
-      });
-
-      // Insert hobbies
-      for (const h of data.hobbies) {
-        await db.insert(userHobbies).values({
-          id: `uh_${userId}_${Math.random().toString(36).substring(2, 7)}`,
-          userId,
-          hobby: h
-        });
-      }
-
-      // Starter bubble types
-      await db.insert(userUnlockedTypes).values([
-        { id: `ut_${userId}_thought`, userId, bubbleType: 'thought' },
-        { id: `ut_${userId}_echo`, userId, bubbleType: 'echo' }
-      ]);
-    } catch (e) {
-      console.error('Error in onboarding db insert:', e);
-    }
-  }
-
-  c.header(
-    'Set-Cookie',
-    `bubl_session=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000`
-  );
-
-  return c.json({
-    success: true,
-    data: {
-      token,
-      user: {
-        id: userId,
-        email: data.email,
-        nickname: data.nickname,
-        age: data.age,
-        pronouns: data.pronouns,
-        location: data.location,
-        latitude: data.latitude ?? 35.0116,
-        longitude: data.longitude ?? 135.7681,
-        bio: data.bio,
-        exchangeInterest: data.exchangeInterest,
-        avatar: data.avatar,
-        mixtureVialMl: 100,
-        lastDewRefillDate: todayStr,
-        languages: ['English'],
-        hobbies: data.hobbies,
-        dailyBurstsRemaining: 3,
-        dailyBurstsResetDate: todayStr,
-        burstBubbleIdsToday: [],
-        breathLevel: 1,
-        breathExp: 0,
-        dailyBreathEnergy: 100,
-        lastBubblePublishedAt: null,
-        unlockedBubbleTypes: ['thought', 'echo'],
-        moderationWarningsCount: 0,
-        suspendedUntil: null,
-        moderationWarningsHistory: []
-      }
-    }
-  });
-});
-
-// GET /api/auth/me (Current Authenticated User with Daily Morning Dew replenishment)
-authRoutes.get('/me', async (c) => {
-  const userId = getUserIdFromRequest(c);
-  if (!userId) {
-    return c.json({ success: false, error: 'Unauthorized. No active session.' }, 401);
-  }
-
-  const isDbConnected = await checkDatabaseConnection();
   if (!isDbConnected) {
-    return c.json({ success: true, data: { ...INITIAL_USER, id: userId } });
+    return c.json({ success: false, error: 'Database service is currently unreachable.' }, 503);
   }
 
   try {
-    const userRecords = await db.select().from(users).where(eq(users.id, userId));
-    if (userRecords.length === 0) {
-      return c.json({ success: false, error: 'User profile not found.' }, 404);
+    // 1. Verify OTP code
+    const otpRecords = await db
+      .select()
+      .from(authOtps)
+      .where(
+        and(
+          eq(authOtps.email, normalizedEmail),
+          eq(authOtps.code, data.code.trim()),
+          gt(authOtps.expiresAt, new Date())
+        )
+      );
+
+    if (otpRecords.length === 0) {
+      return c.json({ success: false, error: 'Invalid or expired verification code.' }, 400);
     }
 
-    const u = userRecords[0];
+    // Check if user already exists
+    const existing = await db.select().from(users).where(eq(users.email, normalizedEmail));
+    if (existing.length > 0) {
+      return c.json({ success: false, error: 'An account with this email is already registered.' }, 409);
+    }
+
+    // Mark OTP used
+    await db.update(authOtps).set({ usedAt: new Date() }).where(eq(authOtps.id, otpRecords[0].id));
+
+    // 2. Hash password
+    const passwordHash = hashPassword(data.password);
+    const userId = `user_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     const todayStr = new Date().toISOString().split('T')[0];
 
-    // Check Daily Morning Dew Refill (+30ml if new day, reset bursts to 3)
-    let currentVial = u.mixtureVialMl ?? 100;
-    let burstsRemaining = u.dailyBurstsRemaining;
-    let didUpdate = false;
+    // 3. User begins at Level 1, 0 XP, 100ml vial - 25ml for first bubble = 75ml
+    const initialVial = data.firstBubble ? 75 : 100;
+    const initialExp = data.firstBubble ? 25 : 0; // Award 25 XP for blowing debut bubble
 
-    if (u.lastDewRefillDate !== todayStr) {
-      currentVial = Math.min(100, currentVial + 30);
-      burstsRemaining = 3;
-      didUpdate = true;
+    await db.insert(users).values({
+      id: userId,
+      email: normalizedEmail,
+      passwordHash,
+      nickname: data.nickname.trim(),
+      dob: data.dob,
+      age: data.age,
+      pronouns: data.pronouns.trim() || 'they/them',
+      location: data.location.trim(),
+      latitude: data.latitude,
+      longitude: data.longitude,
+      bio: data.bio.trim(),
+      languages: data.languages,
+      exchangeInterest: data.exchangeInterest.trim(),
+      avatar: data.avatar,
+      breathLevel: 1,
+      breathExp: initialExp,
+      dailyBreathEnergy: 100,
+      mixtureVialMl: initialVial,
+      lastDewRefillDate: todayStr,
+      dailyBurstsRemaining: 3,
+      dailyBurstsResetDate: todayStr,
+      lastBubblePublishedAt: data.firstBubble ? Date.now() : null,
+      moderationWarningsCount: 0,
+      suspendedUntil: null
+    });
+
+    // 4. Insert user hobbies
+    for (const h of data.hobbies) {
+      await db.insert(userHobbies).values({
+        id: `uh_${userId}_${h.replace(/\s+/g, '_')}`,
+        userId,
+        hobby: h
+      });
     }
 
-    if (didUpdate) {
-      await db
-        .update(users)
-        .set({
-          mixtureVialMl: currentVial,
-          dailyBurstsRemaining: burstsRemaining,
-          dailyBurstsResetDate: todayStr,
-          lastDewRefillDate: todayStr,
-          updatedAt: new Date()
-        })
-        .where(eq(users.id, userId));
+    // 5. Insert starter unlocked bubble types
+    await db.insert(userUnlockedTypes).values([
+      { id: `ut_${userId}_thought`, userId, bubbleType: 'thought' },
+      { id: `ut_${userId}_echo`, userId, bubbleType: 'echo' }
+    ]);
+
+    // 6. If first debut bubble was blown during ritual, publish it to airspace
+    let debutBubbleId: string | null = null;
+    if (data.firstBubble) {
+      debutBubbleId = `bubble_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+      await db.insert(bubbles).values({
+        id: debutBubbleId,
+        authorId: userId,
+        title: data.firstBubble.title,
+        content: data.firstBubble.content,
+        bubbleType: data.firstBubble.bubbleType,
+        bubbleColor: data.firstBubble.bubbleColor,
+        breathEffort: 'balanced',
+        mixtureEssence: 'Starter Solution',
+        latitude: data.latitude,
+        longitude: data.longitude,
+        isUserBubble: true,
+        moderationStatus: 'clean',
+        distanceKm: 0
+      });
+
+      // Tag with user's top hobbies
+      for (const h of data.hobbies.slice(0, 3)) {
+        await db.insert(bubbleHobbies).values({
+          id: `bh_${debutBubbleId}_${h.replace(/\s+/g, '_')}`,
+          bubbleId: debutBubbleId,
+          hobby: h
+        });
+      }
     }
 
-    // Fetch user hobbies
-    const hobbiesRecords = await db
-      .select()
-      .from(userHobbies)
-      .where(eq(userHobbies.userId, userId));
+    // 7. Establish session
+    const token = `token_${Date.now()}_${Math.random().toString(36).substring(2, 12)}`;
+    activeSessions.set(token, userId);
 
-    // Fetch unlocked types
-    const typeRecords = await db
-      .select()
-      .from(userUnlockedTypes)
-      .where(eq(userUnlockedTypes.userId, userId));
+    c.header(
+      'Set-Cookie',
+      `bubl_session=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000`
+    );
+
+    const userRecords = await db.select().from(users).where(eq(users.id, userId));
+    const profile = await buildUserProfile(userRecords[0]);
 
     return c.json({
       success: true,
       data: {
-        id: u.id,
-        email: u.email || undefined,
-        nickname: u.nickname,
-        age: u.age,
-        pronouns: u.pronouns,
-        location: u.location,
-        latitude: u.latitude || undefined,
-        longitude: u.longitude || undefined,
-        bio: u.bio,
-        exchangeInterest: u.exchangeInterest,
-        avatar: u.avatar,
-        mixtureVialMl: currentVial,
-        lastDewRefillDate: todayStr,
-        languages: ['English'],
-        hobbies: hobbiesRecords.map((h) => h.hobby),
-        dailyBurstsRemaining: burstsRemaining,
-        dailyBurstsResetDate: todayStr,
-        burstBubbleIdsToday: [],
-        breathLevel: u.breathLevel,
-        breathExp: u.breathExp,
-        dailyBreathEnergy: u.dailyBreathEnergy,
-        lastBubblePublishedAt: u.lastBubblePublishedAt,
-        unlockedBubbleTypes: typeRecords.map((t) => t.bubbleType),
-        moderationWarningsCount: u.moderationWarningsCount,
-        suspendedUntil: u.suspendedUntil,
-        moderationWarningsHistory: []
+        token,
+        user: profile,
+        debutBubbleId
       }
     });
   } catch (error) {
-    console.error('Error fetching /api/auth/me:', error);
-    return c.json({ success: false, error: 'Failed to fetch user profile' }, 500);
+    console.error('Onboard registration error:', error);
+    return c.json({ success: false, error: 'Registration failed. Please try again.' }, 500);
   }
 });
 
-// POST /api/auth/refill-vial (Refill vial via mindful actions)
-authRoutes.post('/refill-vial', async (c) => {
-  const userId = getUserIdFromRequest(c);
-  if (!userId) {
-    return c.json({ success: false, error: 'Unauthorized.' }, 401);
-  }
-
-  const { action } = await c.req.json();
-  // action: 'breath_pause' (+15ml) or 'read_letter' (+10ml)
-  const amount = action === 'breath_pause' ? 15 : action === 'read_letter' ? 10 : 5;
-
-  const isDbConnected = await checkDatabaseConnection();
-  if (!isDbConnected) {
-    return c.json({ success: true, mixtureVialMl: 100 });
-  }
-
-  try {
-    const userRecords = await db.select().from(users).where(eq(users.id, userId));
-    if (userRecords.length === 0) return c.json({ success: false, error: 'User not found' }, 404);
-
-    const currentVial = userRecords[0].mixtureVialMl ?? 100;
-    const newVial = Math.min(100, currentVial + amount);
-
-    await db
-      .update(users)
-      .set({ mixtureVialMl: newVial, updatedAt: new Date() })
-      .where(eq(users.id, userId));
-
-    return c.json({
-      success: true,
-      mixtureVialMl: newVial,
-      message: `Mindful pause completed: +${amount}ml of Soap Mixture added to your vial.`
-    });
-  } catch (e) {
-    return c.json({ success: false, error: 'Failed to refill vial' }, 500);
-  }
-});
-
-// Logout
-authRoutes.post('/logout', (c) => {
+// 5. Logout
+authRoutes.post('/logout', async (c) => {
   const token = c.req.header('Authorization')?.replace('Bearer ', '');
-  if (token) activeSessions.delete(token);
+  if (token && activeSessions.has(token)) {
+    activeSessions.delete(token);
+  }
+  const cookieHeader = c.req.header('Cookie') || '';
+  const match = cookieHeader.match(/bubl_session=([^;]+)/);
+  if (match && activeSessions.has(match[1])) {
+    activeSessions.delete(match[1]);
+  }
 
   c.header('Set-Cookie', 'bubl_session=; Path=/; HttpOnly; Max-Age=0');
-  return c.json({ success: true, message: 'Logged out successfully.' });
+  return c.json({ success: true, message: 'Logged out peacefully.' });
 });
